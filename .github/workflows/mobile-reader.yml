@@ -1,0 +1,44 @@
+name: 📖 Mobile Reader
+
+on:
+  pull_request:
+    types: [opened, synchronize, reopened]
+
+permissions:
+  contents: write        # commit the generated .md file
+  pull-requests: write   # post PR comment
+
+jobs:
+  generate-reader:
+    name: Generate Mobile Reader View
+    runs-on: ubuntu-latest
+
+    steps:
+      # 1. Full history so git diff origin/<base>...HEAD works
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      # 2. Run the reader action
+      - name: Generate Reader Markdown
+        uses: your-org/github-mobile-reader@v1     # ← update after publishing
+        with:
+          github_token: ${{ secrets.GITHUB_TOKEN }}
+          base_branch: ${{ github.base_ref }}
+          output_dir: docs/reader
+        env:
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+
+      # 3. Commit the generated file back to the PR branch
+      - name: Commit Reader Markdown
+        run: |
+          git config user.name  "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add docs/reader/
+          if git diff --cached --quiet; then
+            echo "No changes to commit"
+          else
+            git commit -m "docs(reader): update mobile reader view for PR #${{ github.event.pull_request.number }} [skip ci]"
+            git push
+          fi

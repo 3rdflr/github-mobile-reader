@@ -1,0 +1,19 @@
+# Dependencies
+node_modules/
+
+# Build output
+dist/
+
+# macOS metadata
+.DS_Store
+
+# Local Claude Code settings
+.claude/
+
+# Editor directories
+.idea/
+.vscode/
+
+# Logs
+*.log
+npm-debug.log*

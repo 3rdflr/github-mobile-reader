@@ -1,0 +1,24 @@
+name: 'GitHub Mobile Reader'
+description: 'Generate mobile-friendly Markdown summaries of PR diffs and post them as PR comments.'
+author: 'your-org'
+
+branding:
+  icon: 'book-open'
+  color: 'blue'
+
+inputs:
+  github_token:
+    description: 'GitHub token with write access to issues/pull-requests (use ${{ secrets.GITHUB_TOKEN }})'
+    required: true
+  base_branch:
+    description: 'Base branch to diff against (default: main)'
+    required: false
+    default: 'main'
+  output_dir:
+    description: 'Directory where the generated .md file will be saved inside the repo'
+    required: false
+    default: 'docs/reader'
+
+runs:
+  using: 'node20'
+  main: 'dist/action.js'
