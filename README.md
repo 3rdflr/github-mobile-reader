@@ -1,6 +1,5 @@
 # 📖 github-mobile-reader
 
-> **Stop squinting at code on your phone.**
 > `github-mobile-reader` transforms raw git diffs into clean, vertically-scrollable Markdown — no more pinch-zooming or swiping left and right to read a single line.
 
 [![npm version](https://img.shields.io/npm/v/github-mobile-reader.svg)](https://www.npmjs.com/package/github-mobile-reader)
@@ -15,15 +14,17 @@ GitHub's mobile web view renders code in a fixed-width monospace block. Long lin
 
 ## The Solution
 
-`github-mobile-reader` parses a git diff and produces a **Logical Flow** — a compact tree that shows *what the code does*, not just what characters changed. The result is a Markdown document that reads top-to-bottom on any screen width.
+`github-mobile-reader` parses a git diff and produces a **Logical Flow** — a compact tree that shows _what the code does_, not just what characters changed. The result is a Markdown document that reads top-to-bottom on any screen width.
 
 **Before** (raw diff, mobile web):
+
 ```
 ← swipe → swipe → swipe →
 + const result = data.map(item => item.value).filter(v => v > 10).reduce((a,b) => a+b, 0)
 ```
 
 **After** (Reader Markdown):
+
 ```
 data
  └─ map(item → value)
@@ -38,7 +39,7 @@ data
 - **Zero-dependency core** — the parser runs anywhere Node.js ≥ 18 is available
 - **Dual output format** — CJS (`require`) and ESM (`import`) with full TypeScript types
 - **GitHub Action** — drop one YAML block into any repo and get auto-generated Reader docs on every PR
-- **Tracks both sides of a diff** — shows added *and* removed code in separate sections
+- **Tracks both sides of a diff** — shows added _and_ removed code in separate sections
 - **Conservative by design** — when a pattern is ambiguous, the library shows less rather than showing something wrong
 
 ---
@@ -63,17 +64,17 @@ The parser is built on regex-based pattern matching, so it can technically recei
 
 ### Current support (v0.1)
 
-| Language | Extensions | Flow Quality | Notes |
-|----------|-----------|:------------:|-------|
-| **JavaScript** | `.js` `.mjs` `.cjs` | ✅ Full | Baseline target language |
-| **TypeScript** | `.ts` | ✅ Full | JS superset — all patterns apply |
-| **React JSX** | `.jsx` | ✅ Full | Same syntax as JS |
-| **React TSX** | `.tsx` | ✅ Full | Same syntax as TS |
-| **Next.js** | `.js` `.ts` `.jsx` `.tsx` | ✅ Full | Framework on top of JS/TS |
-| **Java** | `.java` | ⚠️ Partial (~55%) | `if/for/while` and dot-chaining work; function declarations missed (no `const/let/var`) |
-| **C#** | `.cs` | ⚠️ Partial (~35%) | LINQ chaining (`.Where().Select()`) works; `using`/`namespace`/`class` not detected |
-| **C** | `.c` `.h` | ❌ Minimal (~15%) | No matching keywords; pointer syntax (`->`, `*`) not understood |
-| **Python, Go, Rust, etc.** | — | 🔜 Planned | See roadmap below |
+| Language                   | Extensions                |   Flow Quality    | Notes                                                                                   |
+| -------------------------- | ------------------------- | :---------------: | --------------------------------------------------------------------------------------- |
+| **JavaScript**             | `.js` `.mjs` `.cjs`       |      ✅ Full      | Baseline target language                                                                |
+| **TypeScript**             | `.ts`                     |      ✅ Full      | JS superset — all patterns apply                                                        |
+| **React JSX**              | `.jsx`                    |      ✅ Full      | Same syntax as JS                                                                       |
+| **React TSX**              | `.tsx`                    |      ✅ Full      | Same syntax as TS                                                                       |
+| **Next.js**                | `.js` `.ts` `.jsx` `.tsx` |      ✅ Full      | Framework on top of JS/TS                                                               |
+| **Java**                   | `.java`                   | ⚠️ Partial (~55%) | `if/for/while` and dot-chaining work; function declarations missed (no `const/let/var`) |
+| **C#**                     | `.cs`                     | ⚠️ Partial (~35%) | LINQ chaining (`.Where().Select()`) works; `using`/`namespace`/`class` not detected     |
+| **C**                      | `.c` `.h`                 | ❌ Minimal (~15%) | No matching keywords; pointer syntax (`->`, `*`) not understood                         |
+| **Python, Go, Rust, etc.** | —                         |    🔜 Planned     | See roadmap below                                                                       |
 
 > **Note:** Java, C#, and C files are not processed by the GitHub Action by default.
 > The Action only scans `.js .jsx .ts .tsx .mjs .cjs` files ([`src/action.ts` line 66](src/action.ts)).
@@ -86,8 +87,8 @@ All four share the same underlying syntax. The parser recognises:
 - **Method chaining** — line starting with `.` after a line ending with `)` or `}`
   ```ts
   data
-    .filter(item => item.active)   // detected as P1 chain
-    .map(item => item.value)       // detected as P1 chain
+    .filter((item) => item.active) // detected as P1 chain
+    .map((item) => item.value); // detected as P1 chain
   ```
 - **Function declarations** — `const`, `let`, `var`, `function`, `async`
 - **Conditionals** — `if / else / switch`
@@ -98,12 +99,12 @@ All four share the same underlying syntax. The parser recognises:
 
 These languages use different conventions for the patterns above:
 
-| Concept | JS/TS (✅ detected) | Java / C# / C (❌ missed) |
-|---------|---------------------|--------------------------|
-| Variable declaration | `const x = …` | `int x = …` / `String x = …` |
-| Arrow callbacks | `x => x.value` | Lambdas differ per language |
-| Noise imports | `import` / `export` | `using` / `#include` / `package` |
-| Async functions | `async function foo()` | `async Task<T> Foo()` |
+| Concept              | JS/TS (✅ detected)    | Java / C# / C (❌ missed)        |
+| -------------------- | ---------------------- | -------------------------------- |
+| Variable declaration | `const x = …`          | `int x = …` / `String x = …`     |
+| Arrow callbacks      | `x => x.value`         | Lambdas differ per language      |
+| Noise imports        | `import` / `export`    | `using` / `#include` / `package` |
+| Async functions      | `async function foo()` | `async Task<T> Foo()`            |
 
 ### Roadmap — Language Adapter system (v0.2)
 
@@ -118,6 +119,7 @@ src/languages/
 ```
 
 Each adapter will declare:
+
 - Supported file extensions
 - Function-declaration detection pattern
 - Keywords to ignore (noise list)
@@ -134,13 +136,13 @@ npm install github-mobile-reader
 ```
 
 ```ts
-import { generateReaderMarkdown } from 'github-mobile-reader'
-import { execSync } from 'child_process'
+import { generateReaderMarkdown } from "github-mobile-reader";
+import { execSync } from "child_process";
 
-const diff = execSync('git diff HEAD~1', { encoding: 'utf8' })
-const markdown = generateReaderMarkdown(diff, { file: 'src/utils.ts' })
+const diff = execSync("git diff HEAD~1", { encoding: "utf8" });
+const markdown = generateReaderMarkdown(diff, { file: "src/utils.ts" });
 
-console.log(markdown)
+console.log(markdown);
 ```
 
 ---
@@ -165,8 +167,8 @@ on:
     types: [opened, synchronize, reopened]
 
 permissions:
-  contents: write        # commit the generated .md file
-  pull-requests: write   # post the PR comment
+  contents: write # commit the generated .md file
+  pull-requests: write # post the PR comment
 
 jobs:
   generate-reader:
@@ -177,7 +179,7 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
         with:
-          fetch-depth: 0          # full history required for git diff
+          fetch-depth: 0 # full history required for git diff
 
       - name: Generate Reader Markdown
         uses: 3rdflr/github-mobile-reader@v1
@@ -210,11 +212,11 @@ That's it. Every subsequent PR will automatically get:
 
 ### Action Inputs
 
-| Input | Required | Default | Description |
-|-------|----------|---------|-------------|
-| `github_token` | ✅ | — | Use `${{ secrets.GITHUB_TOKEN }}` |
-| `base_branch` | ❌ | `main` | The branch the PR is merging into |
-| `output_dir` | ❌ | `docs/reader` | Directory for generated `.md` files |
+| Input          | Required | Default       | Description                         |
+| -------------- | -------- | ------------- | ----------------------------------- |
+| `github_token` | ✅       | —             | Use `${{ secrets.GITHUB_TOKEN }}`   |
+| `base_branch`  | ❌       | `main`        | The branch the PR is merging into   |
+| `output_dir`   | ❌       | `docs/reader` | Directory for generated `.md` files |
 
 ---
 
@@ -238,35 +240,38 @@ yarn add github-mobile-reader
 ### CommonJS
 
 ```js
-const { generateReaderMarkdown } = require('github-mobile-reader')
+const { generateReaderMarkdown } = require("github-mobile-reader");
 ```
 
 ### ESM / TypeScript
 
 ```ts
-import { generateReaderMarkdown, parseDiffToLogicalFlow } from 'github-mobile-reader'
+import {
+  generateReaderMarkdown,
+  parseDiffToLogicalFlow,
+} from "github-mobile-reader";
 ```
 
 ### Basic Example
 
 ```ts
-import { generateReaderMarkdown } from 'github-mobile-reader'
-import { execSync } from 'child_process'
-import { writeFileSync } from 'fs'
+import { generateReaderMarkdown } from "github-mobile-reader";
+import { execSync } from "child_process";
+import { writeFileSync } from "fs";
 
 // Get the diff for the last commit
-const diff = execSync('git diff HEAD~1 HEAD', { encoding: 'utf8' })
+const diff = execSync("git diff HEAD~1 HEAD", { encoding: "utf8" });
 
 // Generate Reader Markdown with metadata
 const markdown = generateReaderMarkdown(diff, {
-  pr: '42',
-  commit: 'a1b2c3d',
-  file: 'src/api/users.ts',
-  repo: 'my-org/my-repo',
-})
+  pr: "42",
+  commit: "a1b2c3d",
+  file: "src/api/users.ts",
+  repo: "my-org/my-repo",
+});
 
 // Write to a file or post to Slack / Discord / GitHub
-writeFileSync('reader.md', markdown, 'utf8')
+writeFileSync("reader.md", markdown, "utf8");
 ```
 
 ### Low-level API Example
@@ -274,16 +279,16 @@ writeFileSync('reader.md', markdown, 'utf8')
 If you only need the parsed tree (e.g. to build your own renderer):
 
 ```ts
-import { parseDiffToLogicalFlow, renderFlowTree } from 'github-mobile-reader'
+import { parseDiffToLogicalFlow, renderFlowTree } from "github-mobile-reader";
 
-const { root, rawCode, removedCode } = parseDiffToLogicalFlow(diff)
+const { root, rawCode, removedCode } = parseDiffToLogicalFlow(diff);
 
 // root  → FlowNode[]  (the logical tree)
 // rawCode     → string  (added lines, joined)
 // removedCode → string  (removed lines, joined)
 
-const treeLines = renderFlowTree(root)
-console.log(treeLines.join('\n'))
+const treeLines = renderFlowTree(root);
+console.log(treeLines.join("\n"));
 ```
 
 ---
@@ -304,13 +309,14 @@ A generated Reader Markdown document has four sections:
 ---
 
 ## 🧠 Logical Flow
+```
 
-```
 getData()
- └─ filter(callback)
-     └─ map(item → value)
-         └─ reduce(callback)
-```
+└─ filter(callback)
+└─ map(item → value)
+└─ reduce(callback)
+
+````
 
 ## ✅ Added Code
 
@@ -319,17 +325,19 @@ const result = getData()
   .filter(item => item.active)
   .map(item => item.value)
   .reduce((a, b) => a + b, 0)
-```
+````
 
 ## ❌ Removed Code
 
 ```typescript
-const result = getData().map(item => item.value)
+const result = getData().map((item) => item.value);
 ```
 
 ---
+
 🛠 Auto-generated by github-mobile-reader. Do not edit manually.
-```
+
+````
 
 ---
 
@@ -363,7 +371,7 @@ interface ParseResult {
   rawCode: string     // added lines joined with \n
   removedCode: string // removed lines joined with \n
 }
-```
+````
 
 ---
 
@@ -372,7 +380,7 @@ interface ParseResult {
 Converts a `FlowNode[]` tree into an array of Markdown-safe text lines.
 
 ```ts
-const lines = renderFlowTree(root)
+const lines = renderFlowTree(root);
 // [ 'getData()', ' └─ filter(callback)', ' └─ map(item → value)' ]
 ```
 
@@ -382,11 +390,11 @@ const lines = renderFlowTree(root)
 
 ```ts
 interface FlowNode {
-  type: 'root' | 'chain' | 'condition' | 'loop' | 'function' | 'call'
-  name: string
-  children: FlowNode[]
-  depth: number
-  priority: Priority
+  type: "root" | "chain" | "condition" | "loop" | "function" | "call";
+  name: string;
+  children: FlowNode[];
+  depth: number;
+  priority: Priority;
 }
 ```
 
@@ -394,13 +402,13 @@ interface FlowNode {
 
 ### `Priority` (enum)
 
-| Value | Meaning |
-|-------|---------|
-| `CHAINING = 1` | Method chains (`.map()`, `.filter()`, …) — highest priority |
-| `CONDITIONAL = 2` | `if` / `else` / `switch` blocks |
-| `LOOP = 3` | `for` / `while` loops |
-| `FUNCTION = 4` | Function declarations |
-| `OTHER = 5` | Everything else |
+| Value             | Meaning                                                     |
+| ----------------- | ----------------------------------------------------------- |
+| `CHAINING = 1`    | Method chains (`.map()`, `.filter()`, …) — highest priority |
+| `CONDITIONAL = 2` | `if` / `else` / `switch` blocks                             |
+| `LOOP = 3`        | `for` / `while` loops                                       |
+| `FUNCTION = 4`    | Function declarations                                       |
+| `OTHER = 5`       | Everything else                                             |
 
 ---
 
@@ -499,6 +507,3 @@ The parser currently relies on JS/TS syntax heuristics (dot-chaining, `const`/`l
 MIT © [3rdflr](https://github.com/3rdflr)
 
 ---
-
-> **"The era of per-device number crunching is over.
-> One logic. Every screen."**
