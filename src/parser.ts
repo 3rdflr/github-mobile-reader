@@ -64,10 +64,10 @@ export function normalizeCode(lines: string[]): string[] {
   return lines
     .map(line => {
       let normalized = line;
-      normalized = normalized.replace(/;$/, '');
       normalized = normalized.replace(/\/\/.*$/, '');
       normalized = normalized.replace(/\/\*.*?\*\//, '');
       normalized = normalized.trim();
+      normalized = normalized.replace(/;$/, '');
       return normalized;
     })
     .filter(line => line.length > 0);
@@ -137,9 +137,14 @@ export function isLoop(line: string): boolean {
  * Step 9: Detect function declaration (P4)
  */
 export function isFunctionDeclaration(line: string): boolean {
+  const t = line.trim();
   return (
-    /^(function|const|let|var)\s+\w+\s*=?\s*(async\s*)?\(/.test(line.trim()) ||
-    /^(async\s+)?function\s+\w+/.test(line.trim())
+    // function foo() / async function foo()
+    /^(async\s+)?function\s+\w+/.test(t) ||
+    // const foo = () => / const foo = async () => / const foo = async (x: T) =>
+    /^(const|let|var)\s+\w+\s*=\s*(async\s*)?\(/.test(t) ||
+    // const foo = function / const foo = async function
+    /^(const|let|var)\s+\w+\s*=\s*(async\s+)?function/.test(t)
   );
 }
 
@@ -229,6 +234,22 @@ export function parseToFlowTree(lines: string[]): FlowNode[] {
       continue;
     }
 
+    // P4: function declaration — must be checked BEFORE extractRoot,
+    // because "const foo = async ..." would otherwise match extractRoot first.
+    if (isFunctionDeclaration(line)) {
+      const funcMatch = line.match(/(?:function|const|let|var)\s+(\w+)/);
+      roots.push({
+        type: 'function',
+        name: funcMatch ? `${funcMatch[1]}()` : 'function()',
+        children: [],
+        depth: relativeDepth,
+        priority: Priority.FUNCTION,
+      });
+      currentChain = null;
+      prevLine = line;
+      continue;
+    }
+
     // New root / chain start
     const root = extractRoot(line);
     if (root) {
@@ -258,16 +279,6 @@ export function parseToFlowTree(lines: string[]): FlowNode[] {
         children: [],
         depth: relativeDepth,
         priority: Priority.LOOP,
-      });
-      currentChain = null;
-    } else if (isFunctionDeclaration(line)) {
-      const funcMatch = line.match(/(?:function|const|let|var)\s+(\w+)/);
-      roots.push({
-        type: 'function',
-        name: funcMatch ? `${funcMatch[1]}()` : 'function()',
-        children: [],
-        depth: relativeDepth,
-        priority: Priority.FUNCTION,
       });
       currentChain = null;
     }
