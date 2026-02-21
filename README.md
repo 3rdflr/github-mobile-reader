@@ -151,7 +151,7 @@ console.log(markdown);
 
 The easiest way to use this library is as a GitHub Action. On every pull request it will:
 
-1. Parse the diff of all changed `.js` / `.ts` files
+1. Parse the diff of all changed `.js` / `.jsx` / `.ts` / `.tsx` / `.mjs` / `.cjs` files
 2. Write a Reader Markdown file to `docs/reader/pr-<number>.md` inside your repo
 3. Post a summary comment directly on the PR
 
