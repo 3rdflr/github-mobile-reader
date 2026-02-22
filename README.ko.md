@@ -44,7 +44,7 @@ data
 - **GitHub Action** — 레포에 YAML 파일 하나만 추가하면 PR마다 Reader 문서가 자동 생성됩니다
 - **파일별 분리 출력** — 변경된 JS/TS 파일마다 독립적인 섹션으로 출력
 - **JSX/Tailwind 인식** — `.jsx`/`.tsx` 파일은 컴포넌트 트리(`🎨 JSX Structure`)와 Tailwind 클래스 diff(`💅 Style Changes`)를 별도 섹션으로 분리 출력
-- **양방향 diff 추적** — 추가된 코드와 삭제된 코드를 각각 별도 섹션으로 표시
+- **심볼 단위 요약** — 전체 코드 블록을 덤프하는 대신, 어떤 함수/컴포넌트가 추가·삭제·수정됐는지 목록으로 표시
 - **보수적 설계** — 패턴이 애매할 때는 잘못된 정보를 보여주는 대신 덜 보여줍니다
 - **보안 기본값** — 토큰은 `$GITHUB_TOKEN` 환경변수로만 읽음 — 셸 히스토리나 `ps` 목록에 노출되는 `--token` 플래그 없음
 
@@ -108,18 +108,20 @@ npx github-mobile-reader --repo owner/repo --all
 
 PR마다 `reader-output/pr-<번호>.md` 파일 하나가 생성됩니다.
 
-JSX/TSX 파일은 추가 섹션이 생성됩니다:
+변경 요약이 없는 파일은 자동으로 생략됩니다. JSX/TSX 파일은 추가 섹션이 생성됩니다:
 
 ```
 # 📖 PR #42 — My Feature
 
 ## 📄 `src/App.tsx`
 
-### 🧠 Logical Flow   ← JS 로직 트리
+### 변경된 함수 / 컴포넌트
+- ✅ `parseArgs()` — added
+- ✏️ `processPR()` — modified
+- ❌ `oldHelper()` — removed
+
 ### 🎨 JSX Structure  ← 컴포넌트 계층 구조 (JSX/TSX 전용)
 ### 💅 Style Changes  ← 추가/제거된 Tailwind 클래스 (JSX/TSX 전용)
-### ✅ Added Code
-### ❌ Removed Code
 ```
 
 > **참고:** `reader-output/`는 기본적으로 `.gitignore`에 포함되어 있습니다 — 생성된 파일은 로컬에만 저장되며 레포지토리에 커밋되지 않습니다.
@@ -220,8 +222,9 @@ src/languages/
 이 라이브러리를 사용하는 가장 쉬운 방법입니다. 매 PR마다 자동으로:
 
 1. 변경된 `.js` / `.jsx` / `.ts` / `.tsx` / `.mjs` / `.cjs` 파일의 diff를 파싱
-2. `docs/reader/pr-<번호>.md` 파일을 레포에 저장
-3. PR에 요약 코멘트를 자동으로 달아줍니다
+2. Reader Markdown 요약을 **PR 코멘트**로 게시 (파일 커밋 불필요)
+
+> **브랜치 보호 규칙과 호환** — 워크플로우는 `pull-requests: write` 권한만 필요합니다. 커밋을 push하지 않으므로 엄격한 브랜치 보호 규칙이 설정된 레포에서도 동작합니다.
 
 ### Step 1 — 워크플로우 파일 추가
 
@@ -235,7 +238,6 @@ on:
     types: [opened, synchronize, reopened]
 
 permissions:
-  contents: write # .md 파일 커밋
   pull-requests: write # PR 코멘트 작성
 
 jobs:
@@ -247,44 +249,45 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
         with:
-          fetch-depth: 0 # git diff에 전체 히스토리 필요
+          fetch-depth: 0
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
 
       - name: Generate Reader Markdown
-        uses: 3rdflr/github-mobile-reader@v1
-        with:
-          github_token: ${{ secrets.GITHUB_TOKEN }}
-          base_branch: ${{ github.base_ref }}
-          output_dir: docs/reader
+        run: npx github-mobile-reader@latest --repo ${{ github.repository }} --pr ${{ github.event.pull_request.number }} --out ./reader-output
         env:
-          PR_NUMBER: ${{ github.event.pull_request.number }}
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
-      - name: Commit Reader Markdown
-        run: |
-          git config user.name  "github-actions[bot]"
-          git config user.email "github-actions[bot]@users.noreply.github.com"
-          git add docs/reader/
-          if git diff --cached --quiet; then
-            echo "변경사항 없음"
-          else
-            git commit -m "docs(reader): PR #${{ github.event.pull_request.number }} 모바일 리더 업데이트 [skip ci]"
-            git push
-          fi
+      - name: Post PR Comment
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const fs = require('fs');
+            const path = './reader-output/pr-${{ github.event.pull_request.number }}.md';
+            if (!fs.existsSync(path)) { console.log('생성된 파일 없음.'); return; }
+            const body = fs.readFileSync(path, 'utf8');
+            const comments = await github.rest.issues.listComments({
+              owner: context.repo.owner, repo: context.repo.repo,
+              issue_number: ${{ github.event.pull_request.number }},
+            });
+            const prev = comments.data.find(c =>
+              c.user.login === 'github-actions[bot]' && c.body.startsWith('# 📖 PR #')
+            );
+            if (prev) await github.rest.issues.deleteComment({
+              owner: context.repo.owner, repo: context.repo.repo, comment_id: prev.id,
+            });
+            await github.rest.issues.createComment({
+              owner: context.repo.owner, repo: context.repo.repo,
+              issue_number: ${{ github.event.pull_request.number }}, body,
+            });
 ```
 
 ### Step 2 — PR 열기
 
-이게 전부입니다. 이후 모든 PR에 자동으로:
-
-- `docs/reader/pr-<번호>.md` 파일 생성
-- 생성된 파일 링크가 담긴 PR 코멘트 자동 게시
-
-### Action 입력값
-
-| 입력값         | 필수 | 기본값        | 설명                               |
-| -------------- | ---- | ------------- | ---------------------------------- |
-| `github_token` | ✅   | —             | `${{ secrets.GITHUB_TOKEN }}` 사용 |
-| `base_branch`  | ❌   | `main`        | PR이 머지되는 대상 브랜치          |
-| `output_dir`   | ❌   | `docs/reader` | 생성된 `.md` 파일 저장 경로        |
+이게 전부입니다. 이후 모든 PR에 `github-actions[bot]`이 Reader Markdown 코멘트를 자동으로 달아줍니다. 새 커밋을 push할 때마다 코멘트가 업데이트됩니다 (중복 게시 없음).
 
 ---
 
@@ -363,47 +366,53 @@ console.log(treeLines.join("\n"));
 
 ## 출력 형식
 
-생성된 Reader Markdown 문서는 네 개의 섹션으로 구성됩니다:
+생성된 Reader Markdown 코멘트는 다음 구조로 작성됩니다:
 
-````markdown
-# 📖 GitHub Reader View
+```markdown
+# 📖 PR #42 — My Feature
 
-> Generated by **github-mobile-reader**
 > Repository: my-org/my-repo
-> Pull Request: #42
 > Commit: `a1b2c3d`
-> File: `src/api/users.ts`
+> 변경된 JS/TS 파일: 2개
 
 ---
 
-## 🧠 Logical Flow
+## 📄 `src/api/users.ts`
 
-```
-getData()
- └─ filter(callback)
-     └─ map(item → value)
-         └─ reduce(callback)
-```
+### 변경된 함수 / 컴포넌트
 
-## ✅ Added Code
-
-```typescript
-const result = getData()
-  .filter((item) => item.active)
-  .map((item) => item.value)
-  .reduce((a, b) => a + b, 0);
-```
-
-## ❌ Removed Code
-
-```typescript
-const result = getData().map((item) => item.value);
-```
+- ✅ `getUser()` — added
+- ✏️ `updateUser()` — modified
+- ❌ `legacyFetch()` — removed
 
 ---
 
-🛠 Auto-generated by github-mobile-reader. Do not edit manually.
-````
+## 📄 `src/components/UserCard.tsx`
+
+### 변경된 함수 / 컴포넌트
+
+- ✏️ `UserCard()` — modified
+
+### 🎨 JSX Structure
+
+```
+div
+  header
+  section
+    UserAvatar
+    UserName
+```
+
+### 💅 Style Changes
+
+**div**
+  + dark:bg-gray-900  rounded-xl
+  - bg-white
+
+---
+
+🛠 Auto-generated by github-mobile-reader.
+```
 
 ---
 

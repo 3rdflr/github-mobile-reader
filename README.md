@@ -42,7 +42,7 @@ data
 - **GitHub Action** — drop one YAML block into any repo and get auto-generated Reader docs on every PR
 - **File-by-file output** — each changed JS/TS file gets its own independent section in the output
 - **JSX/Tailwind aware** — `.jsx`/`.tsx` files get a component tree (`🎨 JSX Structure`) and a Tailwind class diff (`💅 Style Changes`) instead of one unreadable blob
-- **Tracks both sides of a diff** — shows added _and_ removed code in separate sections
+- **Symbol-level summary** — instead of dumping entire code blocks, the output lists which functions/components were added, removed, or modified
 - **Conservative by design** — when a pattern is ambiguous, the library shows less rather than showing something wrong
 - **Secure by default** — token is read from `$GITHUB_TOKEN` only; no flag that leaks to shell history or `ps`
 
@@ -177,18 +177,20 @@ Token: read from `$GITHUB_TOKEN` environment variable (60 req/hr unauthenticated
 
 Each PR produces one file: `reader-output/pr-<number>.md`.
 
-Inside that file, every changed JS/TS file gets its own section. JSX/TSX files get two extra sections:
+Inside that file, every changed JS/TS file gets its own section. Files with no detectable symbol changes are automatically skipped.
 
 ```
 # 📖 PR #42 — My Feature
 
 ## 📄 `src/App.tsx`
 
-### 🧠 Logical Flow   ← JS logic tree
+### 변경된 함수 / 컴포넌트
+- ✅ `parseArgs()` — added
+- ✏️ `processPR()` — modified
+- ❌ `oldHelper()` — removed
+
 ### 🎨 JSX Structure  ← component hierarchy (JSX/TSX only)
 ### 💅 Style Changes  ← added/removed Tailwind classes (JSX/TSX only)
-### ✅ Added Code
-### ❌ Removed Code
 ```
 
 > **Note:** `reader-output/` is gitignored by default — the generated files are local only and not committed to your repository.
@@ -218,8 +220,9 @@ console.log(markdown);
 The easiest way to use this library is as a GitHub Action. On every pull request it will:
 
 1. Parse the diff of all changed `.js` / `.jsx` / `.ts` / `.tsx` / `.mjs` / `.cjs` files
-2. Write a Reader Markdown file to `docs/reader/pr-<number>.md` inside your repo
-3. Post a summary comment directly on the PR
+2. Post a Reader Markdown summary as a **PR comment** (no file commits required)
+
+> **Branch protection compatible** — the workflow only needs `pull-requests: write` permission. It does not push any commits, so it works even with strict branch protection rules.
 
 ### Step 1 — Add the workflow file
 
@@ -233,8 +236,7 @@ on:
     types: [opened, synchronize, reopened]
 
 permissions:
-  contents: write # commit the generated .md file
-  pull-requests: write # post the PR comment
+  pull-requests: write # post PR comment
 
 jobs:
   generate-reader:
@@ -245,44 +247,45 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
         with:
-          fetch-depth: 0 # full history required for git diff
+          fetch-depth: 0
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
 
       - name: Generate Reader Markdown
-        uses: 3rdflr/github-mobile-reader@v1
-        with:
-          github_token: ${{ secrets.GITHUB_TOKEN }}
-          base_branch: ${{ github.base_ref }}
-          output_dir: docs/reader
+        run: npx github-mobile-reader@latest --repo ${{ github.repository }} --pr ${{ github.event.pull_request.number }} --out ./reader-output
         env:
-          PR_NUMBER: ${{ github.event.pull_request.number }}
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
-      - name: Commit Reader Markdown
-        run: |
-          git config user.name  "github-actions[bot]"
-          git config user.email "github-actions[bot]@users.noreply.github.com"
-          git add docs/reader/
-          if git diff --cached --quiet; then
-            echo "No changes to commit"
-          else
-            git commit -m "docs(reader): update mobile reader for PR #${{ github.event.pull_request.number }} [skip ci]"
-            git push
-          fi
+      - name: Post PR Comment
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const fs = require('fs');
+            const path = './reader-output/pr-${{ github.event.pull_request.number }}.md';
+            if (!fs.existsSync(path)) { console.log('No reader file generated.'); return; }
+            const body = fs.readFileSync(path, 'utf8');
+            const comments = await github.rest.issues.listComments({
+              owner: context.repo.owner, repo: context.repo.repo,
+              issue_number: ${{ github.event.pull_request.number }},
+            });
+            const prev = comments.data.find(c =>
+              c.user.login === 'github-actions[bot]' && c.body.startsWith('# 📖 PR #')
+            );
+            if (prev) await github.rest.issues.deleteComment({
+              owner: context.repo.owner, repo: context.repo.repo, comment_id: prev.id,
+            });
+            await github.rest.issues.createComment({
+              owner: context.repo.owner, repo: context.repo.repo,
+              issue_number: ${{ github.event.pull_request.number }}, body,
+            });
 ```
 
 ### Step 2 — Open a PR
 
-That's it. Every subsequent PR will automatically get:
-
-- A Reader Markdown file at `docs/reader/pr-<number>.md`
-- A comment on the PR linking to the generated file
-
-### Action Inputs
-
-| Input          | Required | Default       | Description                         |
-| -------------- | -------- | ------------- | ----------------------------------- |
-| `github_token` | ✅       | —             | Use `${{ secrets.GITHUB_TOKEN }}`   |
-| `base_branch`  | ❌       | `main`        | The branch the PR is merging into   |
-| `output_dir`   | ❌       | `docs/reader` | Directory for generated `.md` files |
+That's it. Every subsequent PR will automatically get a Reader Markdown comment posted by `github-actions[bot]`. The comment is updated (not duplicated) on every new push.
 
 ---
 
@@ -361,49 +364,53 @@ console.log(treeLines.join("\n"));
 
 ## Output Format
 
-A generated Reader Markdown document has four sections:
+A generated Reader Markdown comment has the following structure:
 
 ```markdown
-# 📖 GitHub Reader View
+# 📖 PR #42 — My Feature
 
-> Generated by **github-mobile-reader**
 > Repository: my-org/my-repo
-> Pull Request: #42
 > Commit: `a1b2c3d`
-> File: `src/api/users.ts`
+> 변경된 JS/TS 파일: 2개
 
 ---
 
-## 🧠 Logical Flow
-```
+## 📄 `src/api/users.ts`
 
-getData()
-└─ filter(callback)
-└─ map(item → value)
-└─ reduce(callback)
+### 변경된 함수 / 컴포넌트
 
-````
-
-## ✅ Added Code
-
-```typescript
-const result = getData()
-  .filter(item => item.active)
-  .map(item => item.value)
-  .reduce((a, b) => a + b, 0)
-````
-
-## ❌ Removed Code
-
-```typescript
-const result = getData().map((item) => item.value);
-```
+- ✅ `getUser()` — added
+- ✏️ `updateUser()` — modified
+- ❌ `legacyFetch()` — removed
 
 ---
 
-🛠 Auto-generated by github-mobile-reader. Do not edit manually.
+## 📄 `src/components/UserCard.tsx`
 
-````
+### 변경된 함수 / 컴포넌트
+
+- ✏️ `UserCard()` — modified
+
+### 🎨 JSX Structure
+
+```
+div
+  header
+  section
+    UserAvatar
+    UserName
+```
+
+### 💅 Style Changes
+
+**div**
+  + dark:bg-gray-900  rounded-xl
+  - bg-white
+
+---
+
+🛠 Auto-generated by github-mobile-reader.
+```
 
 ---
 
