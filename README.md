@@ -1,6 +1,7 @@
 # 📖 github-mobile-reader
 
-> `github-mobile-reader` transforms raw git diffs into clean, vertically-scrollable Markdown — no more pinch-zooming or swiping left and right to read a single line.
+> 깃허브 PR diff를 모바일에서 읽기 좋은 Markdown으로 변환합니다.
+> 긴 코드를 읽지 않아도 **함수 단위로 무엇이 바뀌었는지** 한눈에 파악할 수 있습니다.
 
 [![npm version](https://img.shields.io/npm/v/github-mobile-reader.svg)](https://www.npmjs.com/package/github-mobile-reader)
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](https://opensource.org/licenses/MIT)
@@ -8,222 +9,120 @@
 
 ---
 
-## The Problem
+## 왜 만들었나
 
-GitHub's mobile web view renders code in a fixed-width monospace block. Long lines require horizontal scrolling, deeply nested logic is invisible at a glance, and reviewing a PR on a commute is practically impossible.
+GitHub 모바일 웹에서 PR을 리뷰하면 코드가 고정폭 블록으로 렌더링됩니다.
+긴 줄은 가로 스크롤이 필요하고, 깊게 중첩된 로직은 한눈에 들어오지 않습니다.
 
-## The Solution
+`github-mobile-reader`는 diff를 파싱해 **함수/컴포넌트 단위로 변경 내용을 요약**합니다.
+어떤 함수가 추가/삭제/수정됐는지, 어떤 상태나 UI가 바뀌었는지를 짧게 보여줍니다.
 
-`github-mobile-reader` parses a git diff and produces a **Logical Flow** — a compact tree that shows _what the code does_, not just what characters changed. The result is a Markdown document that reads top-to-bottom on any screen width.
+---
 
-**Before** (raw diff, mobile web):
+## 출력 예시
 
-```
-← swipe → swipe → swipe →
-+ const result = data.map(item => item.value).filter(v => v > 10).reduce((a,b) => a+b, 0)
-```
+```markdown
+## 📄 `src/components/UserProfileModal.tsx`
 
-**After** (Reader Markdown):
+> 💡 회원 탈퇴 확인 입력창과 Trash2 아이콘 버튼을 추가하고, deleteConfirmInput 검증 후
+> deleteAccount API를 비동기 호출하는 흐름으로 handleDeleteAccount를 변경함.
 
-```
-data
- └─ map(item → value)
-     └─ filter(callback)
-         └─ reduce(callback)
+### ❌ `loadProfile` _(Function)_ — 제거됨
+_Context: `router`_
+
+### ✏️ `UserProfileModal` _(Function)_ — 변경됨
+**동작 변화**
++ `setShowDeleteConfirm()` 호출
++ `setDeleteConfirmInput()` 호출
+**UI 변화**
++ `<button>`
++ `<Trash2>`
++ `<input>`
+
+### ✏️ `handleDeleteAccount` _(Function)_ — 변경됨
+**동작 변화**
++ 조건: deleteConfirmInput !== '탈퇴'
++ `setIsDeleting()` 호출
++ `deleteAccount(` 비동기 호출
 ```
 
 ---
 
-## Features
+## 주요 기능
 
-- **Zero-dependency core** — the parser runs anywhere Node.js ≥ 18 is available
-- **Dual output format** — CJS (`require`) and ESM (`import`) with full TypeScript types
-- **CLI** — `npx github-mobile-reader --repo owner/repo --pr 42` fetches and converts any PR instantly
-- **GitHub Action** — drop one YAML block into any repo and get auto-generated Reader docs on every PR
-- **File-by-file output** — each changed JS/TS file gets its own independent section in the output
-- **JSX/Tailwind aware** — `.jsx`/`.tsx` files get a component tree (`🎨 JSX Structure`) and a Tailwind class diff (`💅 Style Changes`) instead of one unreadable blob
-- **Tracks both sides of a diff** — shows added _and_ removed code in separate sections
-- **Conservative by design** — when a pattern is ambiguous, the library shows less rather than showing something wrong
-- **Secure by default** — token is read from `$GITHUB_TOKEN` only; no flag that leaks to shell history or `ps`
-
----
-
-## Table of Contents
-
-1. [Quick Start](#quick-start)
-2. [Language Support](#language-support)
-3. [CLI Usage](#cli-usage)
-4. [GitHub Action (recommended)](#github-action-recommended)
-5. [npm Library Usage](#npm-library-usage)
-6. [Output Format](#output-format)
-7. [API Reference](#api-reference)
-8. [How the Parser Works](#how-the-parser-works)
-9. [Contributing](#contributing)
-10. [License](#license)
+- **함수 단위 요약** — 파일 전체가 아닌 함수/컴포넌트별로 변경 내용을 정리
+- **상태(✅ 추가 / ❌ 제거 / ✏️ 변경)** 표시
+- **Context 인라인** — 단순 변수 할당(`router`, `user` 등)은 독립 섹션 대신 `_Context: ..._`로 요약
+- **동작 변화** — 새로 호출된 함수, 추가된 조건 감지
+- **UI 변화** — 추가/제거된 JSX 컴포넌트 감지
+- **Props 변화** — TypeScript 인터페이스/타입 변경 감지
+- **JSX 시맨틱 패턴** — `🔄 list → <Component>` (map), `⚡ cond && <Component>` (조건부 렌더링)
+- **Gemini AI 요약** (선택) — 복잡한 함수도 1~3줄로 자연어 요약 (`> 💡 ...`)
+- **보안** — 토큰은 환경변수로만 주입; 코드에 하드코딩 불가
 
 ---
 
-## Language Support
+## 목차
 
-The parser is built on regex-based pattern matching, so it can technically receive a diff from any language. However, the detection patterns are tuned to JavaScript/TypeScript syntax, which means the **quality of the Logical Flow output varies by language**.
-
-### Current support (v0.1)
-
-| Language                   | Extensions                |   Flow Quality    | Notes                                                                                   |
-| -------------------------- | ------------------------- | :---------------: | --------------------------------------------------------------------------------------- |
-| **JavaScript**             | `.js` `.mjs` `.cjs`       |      ✅ Full      | Baseline target language                                                                |
-| **TypeScript**             | `.ts`                     |      ✅ Full      | JS superset — all patterns apply                                                        |
-| **React JSX**              | `.jsx`                    |      ✅ Full      | Same syntax as JS                                                                       |
-| **React TSX**              | `.tsx`                    |      ✅ Full      | Same syntax as TS                                                                       |
-| **Next.js**                | `.js` `.ts` `.jsx` `.tsx` |      ✅ Full      | Framework on top of JS/TS                                                               |
-| **Java**                   | `.java`                   | ⚠️ Partial (~55%) | `if/for/while` and dot-chaining work; function declarations missed (no `const/let/var`) |
-| **C#**                     | `.cs`                     | ⚠️ Partial (~35%) | LINQ chaining (`.Where().Select()`) works; `using`/`namespace`/`class` not detected     |
-| **C**                      | `.c` `.h`                 | ❌ Minimal (~15%) | No matching keywords; pointer syntax (`->`, `*`) not understood                         |
-| **Python, Go, Rust, etc.** | —                         |    🔜 Planned     | See roadmap below                                                                       |
-
-> **Note:** Java, C#, and C files are not processed by the GitHub Action by default.
-> The Action only scans `.js .jsx .ts .tsx .mjs .cjs` files ([`src/action.ts` line 66](src/action.ts)).
-> To process other languages you would need a custom adapter (see [Contributing](#contributing)).
-
-### Why JS/TS/React/Next.js work fully
-
-All four share the same underlying syntax. The parser recognises:
-
-- **Method chaining** — line starting with `.` after a line ending with `)` or `}`
-  ```ts
-  data
-    .filter((item) => item.active) // detected as P1 chain
-    .map((item) => item.value); // detected as P1 chain
-  ```
-- **Function declarations** — `const`, `let`, `var`, `function`, `async`
-- **Conditionals** — `if / else / switch`
-- **Loops** — `for / while`
-- **Noise filtering** — `import`, `export`, `type`, `interface`, `console.log` are silently dropped
-
-### Why C / C# / Java are limited
-
-These languages use different conventions for the patterns above:
-
-| Concept              | JS/TS (✅ detected)    | Java / C# / C (❌ missed)        |
-| -------------------- | ---------------------- | -------------------------------- |
-| Variable declaration | `const x = …`          | `int x = …` / `String x = …`     |
-| Arrow callbacks      | `x => x.value`         | Lambdas differ per language      |
-| Noise imports        | `import` / `export`    | `using` / `#include` / `package` |
-| Async functions      | `async function foo()` | `async Task<T> Foo()`            |
-
-### Roadmap — Language Adapter system (v0.2)
-
-To support additional languages, a **Language Adapter** architecture is planned:
-
-```
-src/languages/
-├── base.adapter.ts     ← shared interface
-├── js-ts.adapter.ts    ← current logic (promoted from parser.ts)
-├── java.adapter.ts     ← public/private/void declarations, Stream chaining
-└── csharp.adapter.ts   ← using/namespace, LINQ chaining
-```
-
-Each adapter will declare:
-
-- Supported file extensions
-- Function-declaration detection pattern
-- Keywords to ignore (noise list)
-- Chaining notation (dot vs. arrow `->`)
-
-If you'd like to contribute an adapter for your language, see [Contributing](#contributing).
+1. [CLI 사용법](#cli-사용법)
+2. [GitHub Action](#github-action)
+3. [Gemini AI 요약 설정](#gemini-ai-요약-설정-선택)
+4. [출력 형식 상세](#출력-형식-상세)
+5. [npm 라이브러리 사용](#npm-라이브러리-사용)
+6. [지원 언어](#지원-언어)
+7. [프로젝트 구조](#프로젝트-구조)
+8. [기여](#기여)
 
 ---
 
-## CLI Usage
+## CLI 사용법
 
-Run `github-mobile-reader` directly from your terminal — no setup, no config file. It fetches a PR diff from GitHub, converts it to mobile-friendly Markdown, and saves one file per PR to `./reader-output/`.
+별도 설치 없이 `npx`로 바로 실행합니다.
 
-### Authentication
-
-Set your GitHub token as an environment variable **before** running the CLI:
+### 인증
 
 ```bash
 export GITHUB_TOKEN=ghp_xxxx
-npx github-mobile-reader --repo owner/repo --pr 42
 ```
 
-> **Security note:** The CLI does not accept a `--token` flag. Passing secrets as command-line arguments exposes them in shell history and `ps` output. Always use the environment variable.
+> `--token` 플래그는 지원하지 않습니다. 셸 히스토리와 `ps` 출력에 토큰이 노출되기 때문입니다.
 
-### Single PR
+### 단일 PR
 
 ```bash
 npx github-mobile-reader --repo owner/repo --pr 42
 ```
 
-### All recent PRs
+### 최근 PR 전체
 
 ```bash
-npx github-mobile-reader --repo owner/repo --all
+npx github-mobile-reader --repo owner/repo --all --limit 20
 ```
 
-### Options
+### 옵션
 
-| Flag      | Default           | Description                                       |
-| --------- | ----------------- | ------------------------------------------------- |
-| `--repo`  | *(required)*      | Repository in `owner/repo` format                 |
-| `--pr`    | —                 | Process a single PR by number                     |
-| `--all`   | —                 | Process all recent PRs (use with `--limit`)       |
-| `--out`   | `./reader-output` | Output directory — relative paths only, no `..`   |
-| `--limit` | `10`              | Max number of PRs to fetch when using `--all`     |
+| 플래그          | 기본값            | 설명                                              |
+| --------------- | ----------------- | ------------------------------------------------- |
+| `--repo`        | *(필수)*          | `owner/repo` 형식의 저장소 이름                   |
+| `--pr`          | —                 | 특정 PR 번호 처리                                 |
+| `--all`         | —                 | 최근 PR 전체 처리 (`--limit`와 함께 사용)         |
+| `--out`         | `./reader-output` | 출력 디렉터리 (상대 경로, `..` 불가)              |
+| `--limit`       | `10`              | `--all` 사용 시 최대 PR 수                        |
+| `--gemini-key`  | —                 | Gemini API 키 (또는 `GEMINI_API_KEY` 환경변수)    |
 
-Token: read from `$GITHUB_TOKEN` environment variable (60 req/hr unauthenticated, 5 000 req/hr authenticated).
+### 출력
 
-### Output
-
-Each PR produces one file: `reader-output/pr-<number>.md`.
-
-Inside that file, every changed JS/TS file gets its own section. JSX/TSX files get two extra sections:
-
-```
-# 📖 PR #42 — My Feature
-
-## 📄 `src/App.tsx`
-
-### 🧠 Logical Flow   ← JS logic tree
-### 🎨 JSX Structure  ← component hierarchy (JSX/TSX only)
-### 💅 Style Changes  ← added/removed Tailwind classes (JSX/TSX only)
-### ✅ Added Code
-### ❌ Removed Code
-```
-
-> **Note:** `reader-output/` is gitignored by default — the generated files are local only and not committed to your repository.
+PR당 파일 하나 생성: `reader-output/pr-<number>.md`
 
 ---
 
-## Quick Start
+## GitHub Action
 
-```bash
-npm install github-mobile-reader
-```
+PR이 열릴 때마다 자동으로 Reader 문서를 생성하고 PR에 코멘트를 답니다.
 
-```ts
-import { generateReaderMarkdown } from "github-mobile-reader";
-import { execSync } from "child_process";
+### Step 1 — 워크플로우 파일 추가
 
-const diff = execSync("git diff HEAD~1", { encoding: "utf8" });
-const markdown = generateReaderMarkdown(diff, { file: "src/utils.ts" });
-
-console.log(markdown);
-```
-
----
-
-## GitHub Action (recommended)
-
-The easiest way to use this library is as a GitHub Action. On every pull request it will:
-
-1. Parse the diff of all changed `.js` / `.jsx` / `.ts` / `.tsx` / `.mjs` / `.cjs` files
-2. Write a Reader Markdown file to `docs/reader/pr-<number>.md` inside your repo
-3. Post a summary comment directly on the PR
-
-### Step 1 — Add the workflow file
-
-Create `.github/workflows/mobile-reader.yml` in your repository:
+`.github/workflows/mobile-reader.yml` 생성:
 
 ```yaml
 name: 📖 Mobile Reader
@@ -233,8 +132,8 @@ on:
     types: [opened, synchronize, reopened]
 
 permissions:
-  contents: write # commit the generated .md file
-  pull-requests: write # post the PR comment
+  contents: write       # 생성된 .md 파일 커밋
+  pull-requests: write  # PR 코멘트 작성
 
 jobs:
   generate-reader:
@@ -245,7 +144,7 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
         with:
-          fetch-depth: 0 # full history required for git diff
+          fetch-depth: 0
 
       - name: Generate Reader Markdown
         uses: 3rdflr/github-mobile-reader@v1
@@ -253,6 +152,7 @@ jobs:
           github_token: ${{ secrets.GITHUB_TOKEN }}
           base_branch: ${{ github.base_ref }}
           output_dir: docs/reader
+          gemini_api_key: ${{ secrets.GEMINI_API_KEY }}  # 선택 사항
         env:
           PR_NUMBER: ${{ github.event.pull_request.number }}
 
@@ -264,314 +164,206 @@ jobs:
           if git diff --cached --quiet; then
             echo "No changes to commit"
           else
-            git commit -m "docs(reader): update mobile reader for PR #${{ github.event.pull_request.number }} [skip ci]"
+            git commit -m "docs(reader): PR #${{ github.event.pull_request.number }} reader 업데이트 [skip ci]"
             git push
           fi
 ```
 
-### Step 2 — Open a PR
+### Step 2 — PR 열기
 
-That's it. Every subsequent PR will automatically get:
+이후 모든 PR에 자동으로:
+- `docs/reader/pr-<number>.md` 생성 및 커밋
+- PR에 요약 코멘트 게시
 
-- A Reader Markdown file at `docs/reader/pr-<number>.md`
-- A comment on the PR linking to the generated file
+### Action 입력값
 
-### Action Inputs
-
-| Input          | Required | Default       | Description                         |
-| -------------- | -------- | ------------- | ----------------------------------- |
-| `github_token` | ✅       | —             | Use `${{ secrets.GITHUB_TOKEN }}`   |
-| `base_branch`  | ❌       | `main`        | The branch the PR is merging into   |
-| `output_dir`   | ❌       | `docs/reader` | Directory for generated `.md` files |
+| 입력값           | 필수 | 기본값        | 설명                                              |
+| ---------------- | ---- | ------------- | ------------------------------------------------- |
+| `github_token`   | ✅   | —             | `${{ secrets.GITHUB_TOKEN }}` 사용                |
+| `base_branch`    | ❌   | `main`        | PR이 병합될 기준 브랜치                           |
+| `output_dir`     | ❌   | `docs/reader` | 생성 파일 저장 경로                               |
+| `gemini_api_key` | ❌   | —             | Gemini AI 요약용 API 키 (없으면 AI 요약 비활성화) |
 
 ---
 
-## npm Library Usage
+## Gemini AI 요약 설정 (선택)
 
-Use `github-mobile-reader` as a plain library in any Node.js project — CI scripts, custom bots, local tooling, etc.
+`useCanvasRenderer` 같은 200줄짜리 hook도 1~3줄로 자연어 요약해줍니다.
+API 키가 없으면 AI 요약 없이 기존과 동일하게 동작합니다.
 
-### Installation
+### API 키 발급
+
+[aistudio.google.com/apikey](https://aistudio.google.com/apikey) — 무료로 발급 가능
+
+### CLI에서 사용
 
 ```bash
-# npm
+# 환경변수로 전달 (권장)
+GEMINI_API_KEY=AIzaSy... npx github-mobile-reader --repo owner/repo --pr 42
+
+# 또는 플래그로 전달
+npx github-mobile-reader --repo owner/repo --pr 42 --gemini-key AIzaSy...
+```
+
+### GitHub Action에서 사용
+
+1. 저장소 **Settings → Secrets and variables → Actions → New repository secret**
+2. 이름: `GEMINI_API_KEY`, 값: 발급받은 키
+3. 워크플로우에 `gemini_api_key: ${{ secrets.GEMINI_API_KEY }}` 추가 (위 예시 참고)
+
+> **보안**: GitHub Secrets에 저장된 키는 워크플로우 로그에도 마스킹되어 노출되지 않습니다.
+
+---
+
+## 출력 형식 상세
+
+```markdown
+# 📖 PR #1 — feat: 회원 탈퇴 기능 추가
+
+> Repository: owner/repo
+> Commit: `a1b2c3d`
+> 변경된 JS/TS 파일: 3개
+
+---
+
+## 📄 `src/components/UserProfileModal.tsx`
+
+> 💡 AI가 생성한 1~3줄 요약 (GEMINI_API_KEY 설정 시)
+
+### ✅ `newFunction` _(Function)_ — 새로 추가
+_Context: `depVar1`, `depVar2`_
+**동작 변화**
++ `someApi(` 비동기 호출
+**UI 변화**
++ `<NewComponent>`
+
+### ❌ `oldFunction` _(Function)_ — 제거됨
+
+### ✏️ `changedFunction` _(Function)_ — 변경됨
+**Props 변화**
++ `newProp: string`
+- `oldProp: number`
+**동작 변화**
++ 조건: value !== 'confirm'
+**JSX 패턴**
+🔄 `items` → `<ItemCard>`
+⚡ `isVisible` && `<Modal>`
+```
+
+### 심볼 분류 기준
+
+| 표시 | 의미 |
+| --- | --- |
+| `✅ ... — 새로 추가` | diff에서 새로 등장한 함수/컴포넌트 |
+| `❌ ... — 제거됨` | diff에서 사라진 함수/컴포넌트 |
+| `✏️ ... — 변경됨` | 기존에 존재하고 내용이 수정된 함수/컴포넌트 |
+| `_Context: `var`_` | 단순 변수 할당 등 독립 섹션이 불필요한 심볼 |
+
+---
+
+## npm 라이브러리 사용
+
+```bash
 npm install github-mobile-reader
-
-# pnpm
-pnpm add github-mobile-reader
-
-# yarn
-yarn add github-mobile-reader
 ```
 
-### CommonJS
+```ts
+import { generateReaderMarkdown } from 'github-mobile-reader';
+import { execSync } from 'child_process';
 
-```js
-const { generateReaderMarkdown } = require("github-mobile-reader");
+const diff = execSync('git diff HEAD~1 HEAD', { encoding: 'utf8' });
+const markdown = generateReaderMarkdown(diff, {
+  pr: '42',
+  commit: 'a1b2c3d',
+  file: 'src/api/users.ts',
+  repo: 'my-org/my-repo',
+});
+
+console.log(markdown);
 ```
 
-### ESM / TypeScript
+### 공개 API
 
 ```ts
 import {
-  generateReaderMarkdown,
-  parseDiffToLogicalFlow,
-} from "github-mobile-reader";
+  generateReaderMarkdown,  // diff → 완성된 Markdown 문서
+  parseDiffHunks,          // diff → DiffHunk[]
+  attributeLinesToSymbols, // DiffHunk[] → SymbolDiff[]
+  generateSymbolSections,  // SymbolDiff[] → string[]
+} from 'github-mobile-reader';
 ```
 
-### Basic Example
+#### `generateReaderMarkdown(diffText, meta?)`
+
+| 파라미터 | 타입 | 설명 |
+| --- | --- | --- |
+| `diffText` | `string` | `git diff` 원시 출력 |
+| `meta.pr` | `string?` | PR 번호 |
+| `meta.commit` | `string?` | 커밋 SHA |
+| `meta.file` | `string?` | 파일 이름 |
+| `meta.repo` | `string?` | `owner/repo` 형식 |
+
+**반환값:** `string` — 완성된 Markdown 문서
+
+#### `SymbolDiff`
 
 ```ts
-import { generateReaderMarkdown } from "github-mobile-reader";
-import { execSync } from "child_process";
-import { writeFileSync } from "fs";
-
-// Get the diff for the last commit
-const diff = execSync("git diff HEAD~1 HEAD", { encoding: "utf8" });
-
-// Generate Reader Markdown with metadata
-const markdown = generateReaderMarkdown(diff, {
-  pr: "42",
-  commit: "a1b2c3d",
-  file: "src/api/users.ts",
-  repo: "my-org/my-repo",
-});
-
-// Write to a file or post to Slack / Discord / GitHub
-writeFileSync("reader.md", markdown, "utf8");
-```
-
-### Low-level API Example
-
-If you only need the parsed tree (e.g. to build your own renderer):
-
-```ts
-import { parseDiffToLogicalFlow, renderFlowTree } from "github-mobile-reader";
-
-const { root, rawCode, removedCode } = parseDiffToLogicalFlow(diff);
-
-// root  → FlowNode[]  (the logical tree)
-// rawCode     → string  (added lines, joined)
-// removedCode → string  (removed lines, joined)
-
-const treeLines = renderFlowTree(root);
-console.log(treeLines.join("\n"));
-```
-
----
-
-## Output Format
-
-A generated Reader Markdown document has four sections:
-
-```markdown
-# 📖 GitHub Reader View
-
-> Generated by **github-mobile-reader**
-> Repository: my-org/my-repo
-> Pull Request: #42
-> Commit: `a1b2c3d`
-> File: `src/api/users.ts`
-
----
-
-## 🧠 Logical Flow
-```
-
-getData()
-└─ filter(callback)
-└─ map(item → value)
-└─ reduce(callback)
-
-````
-
-## ✅ Added Code
-
-```typescript
-const result = getData()
-  .filter(item => item.active)
-  .map(item => item.value)
-  .reduce((a, b) => a + b, 0)
-````
-
-## ❌ Removed Code
-
-```typescript
-const result = getData().map((item) => item.value);
-```
-
----
-
-🛠 Auto-generated by github-mobile-reader. Do not edit manually.
-
-````
-
----
-
-## API Reference
-
-### `generateReaderMarkdown(diffText, meta?)`
-
-The main entry point. Parses a raw git diff string and returns a complete Reader Markdown document.
-
-| Parameter | Type | Description |
-|-----------|------|-------------|
-| `diffText` | `string` | Raw output of `git diff` |
-| `meta.pr` | `string?` | Pull request number |
-| `meta.commit` | `string?` | Commit SHA |
-| `meta.file` | `string?` | File name shown in the header |
-| `meta.repo` | `string?` | Repository in `owner/repo` format |
-
-**Returns:** `string` — the complete Markdown document.
-
----
-
-### `parseDiffToLogicalFlow(diffText)`
-
-Parses a diff into a structured result without rendering.
-
-**Returns:** `ParseResult`
-
-```ts
-interface ParseResult {
-  root: FlowNode[]    // logical tree (added lines)
-  rawCode: string     // added lines joined with \n
-  removedCode: string // removed lines joined with \n
-}
-````
-
----
-
-### `renderFlowTree(nodes, indent?)`
-
-Converts a `FlowNode[]` tree into an array of Markdown-safe text lines.
-
-```ts
-const lines = renderFlowTree(root);
-// [ 'getData()', ' └─ filter(callback)', ' └─ map(item → value)' ]
-```
-
----
-
-### `FlowNode`
-
-```ts
-interface FlowNode {
-  type: "root" | "chain" | "condition" | "loop" | "function" | "call";
+interface SymbolDiff {
   name: string;
-  children: FlowNode[];
-  depth: number;
-  priority: Priority;
+  kind: 'component' | 'function' | 'setup';
+  status: 'added' | 'removed' | 'modified';
+  addedLines: string[];
+  removedLines: string[];
 }
 ```
 
 ---
 
-### `Priority` (enum)
+## 지원 언어
 
-| Value             | Meaning                                                     |
-| ----------------- | ----------------------------------------------------------- |
-| `CHAINING = 1`    | Method chains (`.map()`, `.filter()`, …) — highest priority |
-| `CONDITIONAL = 2` | `if` / `else` / `switch` blocks                             |
-| `LOOP = 3`        | `for` / `while` loops                                       |
-| `FUNCTION = 4`    | Function declarations                                       |
-| `OTHER = 5`       | Everything else                                             |
+파서는 JS/TS 구문 패턴에 최적화되어 있습니다.
 
----
-
-## How the Parser Works
-
-The parser runs a deterministic pipeline — no AI, no external dependencies.
-
-```
-git diff text
-  │
-  ▼
-1. filterDiffLines()     — split + and - lines, strip +++ / --- headers
-  │
-  ▼
-2. normalizeCode()       — remove ; comments, trim whitespace
-  │
-  ▼
-3. getIndentDepth()      — calculate nesting level (2 spaces = 1 level)
-  │
-  ▼
-4. parseToFlowTree()     — match patterns in priority order:
-  │                          P1 chaining  (.map .filter .reduce …)
-  │                          P2 conditional  (if / else / switch)
-  │                          P3 loop  (for / while)
-  │                          P4 function declaration
-  │
-  ▼
-5. renderFlowTree()      — convert tree → indented text lines
-  │
-  ▼
-generateReaderMarkdown() — assemble the final Markdown document
-```
-
-**Key design decisions:**
-
-- **Conservative** — lines that cannot be classified are silently skipped rather than misrepresented.
-- **Imports / exports / types / interfaces / console.log** are ignored; they do not contribute to understanding flow.
-- **Callback arguments** are simplified: `.map(item => item.value)` becomes `map(item → value)` when the body is a single property access; otherwise it becomes `map(callback)`.
-- **Depth** is tracked via indentation (2-space baseline) and used only as a fallback when chaining detection is ambiguous.
-
-### Supported Languages (v0.1)
-
-See the full breakdown in the [Language Support](#language-support) section.
-In short: **JS / TS / React / Next.js are fully supported**; Java and C# are partial; C and others are planned via the Language Adapter system (v0.2).
+| 언어 | 확장자 | 지원 수준 |
+| --- | --- | --- |
+| JavaScript | `.js` `.mjs` `.cjs` | ✅ 완전 지원 |
+| TypeScript | `.ts` | ✅ 완전 지원 |
+| React JSX | `.jsx` | ✅ 완전 지원 |
+| React TSX | `.tsx` | ✅ 완전 지원 |
+| 기타 언어 | — | 🔜 예정 |
 
 ---
 
-## Contributing
-
-Pull requests are welcome! Here's how to get started:
-
-```bash
-# Clone the repo
-git clone https://github.com/3rdflr/github-mobile-reader.git
-cd github-mobile-reader
-
-# Install dependencies
-npm install
-
-# Build (library + action runner)
-npm run build:all
-
-# Watch mode during development
-npm run dev
-```
-
-### Project Structure
+## 프로젝트 구조
 
 ```
 github-mobile-reader/
 ├── src/
-│   ├── parser.ts     ← core diff → logical flow parser
-│   ├── index.ts      ← public npm API surface
-│   ├── action.ts     ← GitHub Action entry point
-│   └── cli.ts        ← CLI entry point (npx github-mobile-reader)
-├── dist/             ← compiled output (auto-generated, do not edit)
-├── reader-output/    ← CLI output directory (gitignored)
-├── .github/
-│   └── workflows/
-│       └── mobile-reader.yml   ← example workflow for consumers
-├── action.yml        ← GitHub Action definition
-├── package.json
-└── tsconfig.json
+│   ├── parser.ts    ← diff 파싱 및 심볼 분석 (핵심 로직)
+│   ├── gemini.ts    ← Gemini Flash AI 요약 (opt-in)
+│   ├── index.ts     ← npm 공개 API
+│   ├── action.ts    ← GitHub Action 진입점
+│   └── cli.ts       ← CLI 진입점
+├── dist/            ← 컴파일 결과물 (자동 생성)
+├── reader-output/   ← CLI 출력 디렉터리 (gitignored)
+├── action.yml       ← GitHub Action 정의
+└── package.json
 ```
 
-### Adding Support for a New Language
+---
 
-The parser currently relies on JS/TS syntax heuristics (dot-chaining, `const`/`let`/`var`, `function`, `if`/`for`/`while`). To add a new language:
+## 기여
 
-1. Add detection helpers in `src/parser.ts` (follow the existing `isChaining`, `isConditional` pattern)
-2. Update `filterDiffLines` to handle the new file extension
-3. Open a PR with a test diff as an example
+```bash
+git clone https://github.com/3rdflr/github-mobile-reader.git
+cd github-mobile-reader
+npm install
+npm run build:all   # 라이브러리 + Action + CLI 빌드
+```
+
+PR 환영합니다.
 
 ---
 
-## License
+## 라이선스
 
 MIT © [3rdflr](https://github.com/3rdflr)
-
----

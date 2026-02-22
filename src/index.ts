@@ -23,6 +23,11 @@ export {
   parseJSXToFlowTree,
   extractChangedSymbols,
   renderJSXTreeCompact,
+  // New symbol-diff API
+  parseDiffHunks,
+  attributeLinesToSymbols,
+  extractPropsChanges,
+  generateSymbolSections,
 } from './parser';
 
 export type {
@@ -30,4 +35,7 @@ export type {
   ParseResult,
   ReaderMarkdownMeta,
   ClassNameChange,
+  // New types
+  SymbolDiff,
+  PropsChange,
 } from './parser';

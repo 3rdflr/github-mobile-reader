@@ -43,6 +43,29 @@ export interface ClassNameChange {
   removed: string[];
 }
 
+export type SymbolKind =
+  | "component"   // PascalCase React component
+  | "function"    // regular function / async function
+  | "setup";      // simple variable assignment, hook call, short initializer
+
+export interface SymbolDiff {
+  name: string;
+  kind: SymbolKind;
+  status: "added" | "removed" | "modified";
+  addedLines: string[];
+  removedLines: string[];
+}
+
+interface DiffHunk {
+  header: string;
+  lines: Array<{ kind: "added" | "removed" | "context"; content: string }>;
+}
+
+export interface PropsChange {
+  added: string[];
+  removed: string[];
+}
+
 // ── JSX / Tailwind helpers ─────────────────────────────────────────────────────
 
 export function isJSXFile(filename: string): boolean {
@@ -538,6 +561,425 @@ export function parseDiffToLogicalFlow(diffText: string): ParseResult {
   };
 }
 
+// ── Shared symbol detection regexes ───────────────────────────────────────────
+
+// Matches lowercase functions AND ALL_CAPS export functions (e.g. DELETE, GET, POST)
+const FUNC_RE =
+  /^(?:export\s+)?(?:async\s+)?function\s+(\w+)|^(?:export\s+)?(?:const|let|var)\s+([a-z]\w+)\s*=\s*(?:async\s+)?\(?|^(?:export\s+)?(?:const|let|var)\s+([a-z]\w+)\s*=\s*[a-z]\w+\s*[<(]/;
+// React component: PascalCase (uppercase first, then at least one lowercase)
+const COMPONENT_RE =
+  /^(?:export\s+)?(?:default\s+)?(?:function|const)\s+([A-Z][a-z][A-Za-z0-9]*)/;
+
+// A declaration line that opens a function body on the same line
+const FUNCTION_BODY_RE = /(?:=>\s*\{|(?:async\s+)?function\s*\w*\s*\()|\)\s*\{/;
+// Arrow function assigned to a const where the body starts on the NEXT line
+// e.g. `const foo = () => someCall(` — multiline, no { on this line
+const ARROW_MULTILINE_RE = /^(?:export\s+)?(?:const|let|var)\s+\w+\s*=\s*(?:async\s+)?\(/;
+
+function extractSymbolFromLine(line: string): string | undefined {
+  const trimmed = line.trim();
+  const cm = trimmed.match(COMPONENT_RE) || trimmed.match(FUNC_RE);
+  if (cm) {
+    const name = cm[1] || cm[2] || cm[3];
+    if (name) return name;
+  }
+  return undefined;
+}
+
+/**
+ * Classify a symbol declaration line as component, function, or setup.
+ * - component: PascalCase (React component)
+ * - function: function keyword, arrow with body, or multiline arrow assignment
+ * - setup: simple one-liner assignment / hook call (e.g. const x = useRouter())
+ */
+function classifySymbol(declarationLine: string): SymbolKind {
+  const trimmed = declarationLine.trim();
+
+  // PascalCase → component
+  if (COMPONENT_RE.test(trimmed)) return "component";
+
+  // `function foo` / `async function foo` keyword → function
+  if (/^(?:export\s+)?(?:async\s+)?function\s+/.test(trimmed)) return "function";
+
+  // Arrow function with body opener on same line → function
+  if (FUNCTION_BODY_RE.test(trimmed)) return "function";
+
+  // `const foo = (` or `const foo = async (` — multiline arrow, body on next line
+  if (ARROW_MULTILINE_RE.test(trimmed)) return "function";
+
+  // Assigned arrow without parens: `const foo = () => someExpr(` (no {)
+  // Only treat as function if it calls something non-trivially (has parens)
+  if (/=\s*(?:async\s+)?\(\)\s*=>\s*\w+\s*\(/.test(trimmed)) return "function";
+
+  // Everything else: const router = useRouter(), const x = 'value', etc.
+  return "setup";
+}
+
+// ── Hunk parsing & symbol attribution ─────────────────────────────────────────
+
+/**
+ * Split raw diff text into structured hunks.
+ * Each hunk has a header line and classified lines (added/removed/context).
+ */
+export function parseDiffHunks(diffText: string): DiffHunk[] {
+  const hunks: DiffHunk[] = [];
+  let current: DiffHunk | null = null;
+
+  for (const line of diffText.split("\n")) {
+    if (line.startsWith("@@")) {
+      current = { header: line, lines: [] };
+      hunks.push(current);
+      continue;
+    }
+    if (!current) continue;
+    // Skip diff file headers
+    if (line.startsWith("+++") || line.startsWith("---")) continue;
+    if (line.startsWith("+")) {
+      current.lines.push({ kind: "added", content: line.substring(1) });
+    } else if (line.startsWith("-")) {
+      current.lines.push({ kind: "removed", content: line.substring(1) });
+    } else {
+      current.lines.push({ kind: "context", content: line });
+    }
+  }
+
+  return hunks;
+}
+
+/**
+ * Extract the trailing function/component name from a @@ hunk header.
+ * e.g. "@@ -10,5 +10,8 @@ function UserProfileModal(" → "UserProfileModal"
+ */
+function extractSymbolFromHunkHeader(header: string): string | undefined {
+  const m = header.match(/@@[^@]*@@\s*(?:export\s+)?(?:default\s+)?(?:async\s+)?(?:function\s+(\w+)|(?:const|let|var)\s+(\w+))/);
+  if (m) return m[1] || m[2];
+  return undefined;
+}
+
+/**
+ * Attribute each added/removed line to the nearest enclosing symbol (function/component).
+ * Uses hunk headers and line-by-line declaration scanning.
+ */
+export function attributeLinesToSymbols(hunks: DiffHunk[]): SymbolDiff[] {
+  const symbolMap = new Map<string, { added: string[]; removed: string[]; kind: SymbolKind }>();
+
+  const getOrCreate = (name: string, kind: SymbolKind) => {
+    if (!symbolMap.has(name)) symbolMap.set(name, { added: [], removed: [], kind });
+    return symbolMap.get(name)!;
+  };
+
+  for (const hunk of hunks) {
+    let currentSymbol = extractSymbolFromHunkHeader(hunk.header) ?? "module-level";
+    let currentKind: SymbolKind = "function";
+
+    for (const { kind, content } of hunk.lines) {
+      // Update current symbol when a declaration is encountered (context or added)
+      if (kind !== "removed") {
+        const declared = extractSymbolFromLine(content);
+        if (declared) {
+          currentSymbol = declared;
+          currentKind = classifySymbol(content);
+        }
+      }
+
+      if (kind === "added") getOrCreate(currentSymbol, currentKind).added.push(content);
+      else if (kind === "removed") getOrCreate(currentSymbol, currentKind).removed.push(content);
+    }
+  }
+
+  const results: SymbolDiff[] = [];
+  for (const [name, { added, removed, kind }] of symbolMap) {
+    if (added.length === 0 && removed.length === 0) continue;
+    results.push({
+      name,
+      kind,
+      status: added.length > 0 && removed.length > 0 ? "modified"
+            : added.length > 0 ? "added"
+            : "removed",
+      addedLines: added,
+      removedLines: removed,
+    });
+  }
+
+  return results;
+}
+
+// ── Props / behavior analysis ──────────────────────────────────────────────────
+
+/**
+ * Detect TypeScript prop/interface changes from added vs removed lines.
+ */
+export function extractPropsChanges(
+  addedLines: string[],
+  removedLines: string[],
+): PropsChange {
+  // Match interface member lines: "  propName?: SomeType;"
+  const MEMBER_RE = /^\s*(\w+\??)\s*:\s*(.+?)(?:;|,)?\s*$/;
+
+  const extractMembers = (lines: string[]): Set<string> => {
+    const members = new Set<string>();
+    for (const line of lines) {
+      const m = line.match(MEMBER_RE);
+      if (m) members.add(`${m[1]}: ${m[2].trim()}`);
+    }
+    return members;
+  };
+
+  const addedMembers = extractMembers(addedLines);
+  const removedMembers = extractMembers(removedLines);
+
+  return {
+    added: [...addedMembers].filter((m) => !removedMembers.has(m)),
+    removed: [...removedMembers].filter((m) => !addedMembers.has(m)),
+  };
+}
+
+/**
+ * Summarize behavioral signals from a set of diff lines.
+ * Returns at most 8 human-readable bullet strings.
+ */
+function buildBehaviorSummary(lines: string[]): string[] {
+  const summary: string[] = [];
+  const normalized = normalizeCode(lines);
+
+  for (const line of normalized) {
+    // React state: const [x, setX] = useState(...)
+    const stateMatch = line.match(/const\s+\[(\w+),\s*set\w+\]\s*=\s*useState/);
+    if (stateMatch) { summary.push(`\`${stateMatch[1]}\` state 추가`); continue; }
+
+    // Hook calls: useEffect, useCallback, useMemo, etc.
+    const hookMatch = line.match(/\b(use[A-Z]\w+)\s*\(/);
+    if (hookMatch && !line.includes("=")) { summary.push(`\`${hookMatch[1]}\` 호출`); continue; }
+
+    // Async/await calls
+    const awaitMatch = line.match(/await\s+([\w.]+\()/);
+    if (awaitMatch) { summary.push(`\`${awaitMatch[1]}\` 비동기 호출`); continue; }
+
+    // Conditionals
+    const condMatch = line.match(/^(if|else if)\s*\((.{1,40})\)/);
+    if (condMatch) { summary.push(`조건: ${condMatch[2]}`); continue; }
+
+    // Generic function calls at root level
+    const callMatch = line.match(/^(\w+)\(/);
+    if (callMatch && !["if", "for", "while", "switch", "catch"].includes(callMatch[1])) {
+      summary.push(`\`${callMatch[1]}()\` 호출`);
+    }
+  }
+
+  return [...new Set(summary)].slice(0, 8);
+}
+
+// Generic / structural HTML tags that carry no semantic meaning in diffs
+const GENERIC_JSX_TAGS = new Set([
+  "div", "span", "section", "article", "aside", "main", "header", "footer",
+  "nav", "ul", "ol", "li", "dl", "dt", "dd", "figure", "figcaption",
+  "p", "br", "hr", "strong", "em", "b", "i", "small", "sub", "sup",
+  "h1", "h2", "h3", "h4", "h5", "h6",
+  "table", "thead", "tbody", "tr", "th", "td",
+  "form", "fieldset", "legend",
+  "svg", "g", "path", "rect", "circle", "line", "polygon",
+  "Fragment", "React.Fragment",
+]);
+
+/**
+ * Detect data-to-component mapping patterns in JSX lines.
+ * Recognises: {list.map(...)} / {items.map(...)} / {data?.map(...)}
+ * Returns entries like "🔄 `list` → `ItemRow`"
+ */
+function detectJSXMappings(lines: string[]): string[] {
+  const mappings: string[] = [];
+  for (const line of lines) {
+    // {source.map((item) => <Component or <div
+    const m = line.match(/\{(\w[\w.?]*)\s*\.map\s*\(\s*(?:\w+|\(\w+\))\s*=>\s*(?:\(?\s*)?<([A-Za-z][A-Za-z0-9.]*)/);
+    if (m) {
+      const source = m[1].replace(/\?$/, "");
+      const component = m[2];
+      mappings.push(`🔄 \`${source}\` → \`<${component}>\``);
+      continue;
+    }
+    // {source?.map((item) => <Component (optional chain variant)
+    const m2 = line.match(/\{(\w[\w.]*)\?\.map\s*\(\s*(?:\w+|\(\w+\))\s*=>/);
+    if (m2) mappings.push(`🔄 \`${m2[1]}\` (map)`);
+  }
+  return [...new Set(mappings)];
+}
+
+/**
+ * Detect conditional rendering patterns in JSX lines.
+ * Recognises: {cond && <Component} / {cond ? <A : <B}
+ * Returns entries like "⚡ `isOpen` → `<Modal>`"
+ */
+function detectJSXConditions(lines: string[]): string[] {
+  const conds: string[] = [];
+  for (const line of lines) {
+    // {cond && <Component
+    const andand = line.match(/\{(\w[\w.?]*)\s*&&\s*<([A-Za-z][A-Za-z0-9.]*)/);
+    if (andand) {
+      const cond = andand[1].replace(/\?$/, "");
+      conds.push(`⚡ \`${cond}\` && \`<${andand[2]}>\``);
+      continue;
+    }
+    // {cond ? <A : <B
+    const ternary = line.match(/\{(\w[\w.?]*)\s*\?\s*<([A-Za-z][A-Za-z0-9.]*)[^:]*:\s*<([A-Za-z][A-Za-z0-9.]*)/);
+    if (ternary) {
+      const cond = ternary[1].replace(/\?$/, "");
+      conds.push(`⚡ \`${cond}\` ? \`<${ternary[2]}>\` : \`<${ternary[3]}>\``);
+    }
+  }
+  return [...new Set(conds)];
+}
+
+/**
+ * Compare two JSX trees and return which MEANINGFUL elements were added vs removed.
+ * Generic structural tags (div, span, p, …) are filtered out.
+ * Mapping (🔄) and conditional (⚡) patterns are surfaced first.
+ */
+function buildJSXDiffSummary(
+  addedTree: FlowNode[],
+  removedTree: FlowNode[],
+  addedRaw: string[],
+  removedRaw: string[],
+): string[] {
+  const flatten = (nodes: FlowNode[], acc: string[] = []): string[] => {
+    for (const n of nodes) {
+      // Strip event props suffix "(onClick, ...)" to get the bare tag name
+      const tag = n.name.replace(/\(.*\)$/, "").trim();
+      acc.push(tag);
+      flatten(n.children, acc);
+    }
+    return acc;
+  };
+
+  // Only keep semantically meaningful tags
+  const significant = (names: string[]) =>
+    names.filter((n) => !GENERIC_JSX_TAGS.has(n) && !n.startsWith("/"));
+
+  const addedNames = new Set(significant(flatten(addedTree)));
+  const removedNames = new Set(significant(flatten(removedTree)));
+
+  const lines: string[] = [];
+
+  // 1. map() relationships
+  const mappings = detectJSXMappings(addedRaw);
+  mappings.slice(0, 3).forEach((m) => lines.push(`+ ${m}`));
+
+  // 2. conditional rendering
+  const conditions = detectJSXConditions(addedRaw);
+  conditions.slice(0, 3).forEach((c) => lines.push(`+ ${c}`));
+
+  // 3. removed conditional rendering
+  detectJSXConditions(removedRaw).slice(0, 2)
+    .forEach((c) => lines.push(`- ${c} 제거`));
+
+  // 4. new meaningful tags not in either mapping/condition lists
+  const alreadyMentioned = new Set(
+    [...mappings, ...conditions].flatMap((s) =>
+      [...s.matchAll(/`<(\w+)>`/g)].map((m) => m[1]),
+    ),
+  );
+  [...addedNames]
+    .filter((n) => !removedNames.has(n) && !alreadyMentioned.has(n))
+    .slice(0, 4)
+    .forEach((n) => lines.push(`+ \`<${n}>\``));
+
+  // 5. removed meaningful tags
+  [...removedNames]
+    .filter((n) => !addedNames.has(n))
+    .slice(0, 3)
+    .forEach((n) => lines.push(`- \`<${n}>\` 제거`));
+
+  return lines;
+}
+
+/**
+ * Generate per-symbol markdown sections showing before/after changes.
+ */
+export function generateSymbolSections(
+  symbolDiffs: SymbolDiff[],
+  isJSX: boolean,
+): string[] {
+  const sections: string[] = [];
+  const STATUS_ICON = { added: "✅", removed: "❌", modified: "✏️" };
+  const STATUS_LABEL = { added: "새로 추가", removed: "제거됨", modified: "변경됨" };
+
+  // Walk the list in order: attach each setup variable to the nearest
+  // preceding significant symbol so it appears as an inline Context line.
+  type SignificantEntry = {
+    sym: SymbolDiff;
+    setupNames: string[];
+  };
+
+  const entries: SignificantEntry[] = [];
+  let pendingSetup: string[] = [];
+
+  for (const sym of symbolDiffs) {
+    if (sym.name === "module-level") continue;
+
+    if (sym.kind === "setup") {
+      pendingSetup.push(sym.name);
+    } else {
+      // Flush pending setup onto this significant symbol
+      entries.push({ sym, setupNames: pendingSetup });
+      pendingSetup = [];
+    }
+  }
+  // Any trailing setup items → attach to last entry or discard if none
+  if (pendingSetup.length > 0 && entries.length > 0) {
+    entries[entries.length - 1].setupNames.push(...pendingSetup);
+  }
+
+  for (const { sym, setupNames } of entries) {
+    const kindLabel = sym.kind === "component" ? "Component" : "Function";
+    sections.push(
+      `### ${STATUS_ICON[sym.status]} \`${sym.name}\` _(${kindLabel})_ — ${STATUS_LABEL[sym.status]}`,
+    );
+
+    // Inline Context line for setup variables / hooks
+    if (setupNames.length > 0) {
+      sections.push(`_Context: ${setupNames.map((n) => `\`${n}\``).join(", ")}_`);
+    }
+
+    // Props / interface changes
+    const props = extractPropsChanges(sym.addedLines, sym.removedLines);
+    if (props.added.length > 0 || props.removed.length > 0) {
+      sections.push("**Props 변화**");
+      props.added.forEach((p) => sections.push(`+ \`${p}\``));
+      props.removed.forEach((p) => sections.push(`- \`${p}\` (제거됨)`));
+    }
+
+    // Behavioral summary for added logic
+    if (sym.status !== "removed") {
+      const addedSummary = buildBehaviorSummary(sym.addedLines);
+      if (addedSummary.length > 0) {
+        sections.push("**동작 변화**");
+        addedSummary.forEach((l) => sections.push(`+ ${l}`));
+      }
+    }
+    // What was removed
+    if (sym.status !== "added" && sym.removedLines.length > 0) {
+      const removedSummary = buildBehaviorSummary(sym.removedLines);
+      removedSummary.slice(0, 4).forEach((l) => sections.push(`- ${l}`));
+    }
+
+    // JSX element diff (map 🔄, conditional ⚡, new/removed tags)
+    if (isJSX) {
+      const addedTree = parseJSXToFlowTree(sym.addedLines);
+      const removedTree = parseJSXToFlowTree(sym.removedLines);
+      const jsxDiff = buildJSXDiffSummary(
+        addedTree, removedTree, sym.addedLines, sym.removedLines,
+      );
+      if (jsxDiff.length > 0) {
+        sections.push("**UI 변화**");
+        jsxDiff.forEach((l) => sections.push(l));
+      }
+    }
+
+    sections.push("");
+  }
+
+  return sections;
+}
+
 // ── Changed symbol extraction ─────────────────────────────────────────────────
 
 /**
@@ -548,18 +990,6 @@ export function extractChangedSymbols(
   addedLines: string[],
   removedLines: string[],
 ): { name: string; status: "added" | "removed" | "modified" }[] {
-  // Match function declarations and arrow function assignments
-  // Must be at the start of a line (after optional export/async keywords)
-  // Matches:
-  //   function foo() / async function foo()
-  //   const foo = async () =>  /  const foo = (
-  //   const useStore = create<T>(  /  const useStore = create(
-  const FUNC_RE =
-    /^(?:export\s+)?(?:async\s+)?function\s+([a-z]\w+)|^(?:export\s+)?(?:const|let|var)\s+([a-z]\w+)\s*=\s*(?:async\s+)?\(?|^(?:export\s+)?(?:const|let|var)\s+([a-z]\w+)\s*=\s*[a-z]\w+\s*[<(]/;
-  // Component: PascalCase starting with uppercase, but exclude ALL_CAPS constants
-  const COMPONENT_RE =
-    /^(?:export\s+)?(?:default\s+)?(?:function|const)\s+([A-Z][a-z][A-Za-z0-9]*)/;
-
   const extract = (lines: string[]): Set<string> => {
     const names = new Set<string>();
     for (const line of lines) {
@@ -633,45 +1063,38 @@ export function generateReaderMarkdown(
     (meta.file && isJSXFile(meta.file)) || hasJSXContent(added),
   );
 
-  // ── Extract changed symbols ───────────────────────────────
-  const changedSymbols = extractChangedSymbols(added, removed);
+  // ── Attribute lines to symbols via hunk parsing ───────────
+  const hunks = parseDiffHunks(diffText);
+  const symbolDiffs = attributeLinesToSymbols(hunks);
 
-  // ── JSX-specific analysis ────────────────────────────────
+  // ── Style changes (className diffs) ───────────────────────
   const classNameChanges = isJSX ? parseClassNameChanges(added, removed) : [];
-  const jsxTree = isJSX ? parseJSXToFlowTree(added) : [];
 
   const sections: string[] = [];
 
-  // ── Header ──────────────────────────────────────────────
-  sections.push("# 📖 GitHub Reader View\n");
-  sections.push("> Generated by **github-mobile-reader**");
-  if (meta.repo) sections.push(`> Repository: ${meta.repo}`);
-  if (meta.pr) sections.push(`> Pull Request: #${meta.pr}`);
-  if (meta.commit) sections.push(`> Commit: \`${meta.commit}\``);
-  if (meta.file) sections.push(`> File: \`${meta.file}\``);
-  sections.push("\n");
-
-  // ── Changed Functions / Components ───────────────────────
-  if (changedSymbols.length > 0) {
-    sections.push("### 변경된 함수 / 컴포넌트\n");
-    const STATUS_ICON = { added: "✅", removed: "❌", modified: "✏️" };
-    for (const { name, status } of changedSymbols) {
-      sections.push(`- ${STATUS_ICON[status]} \`${name}()\` — ${status}`);
+  // ── Per-symbol sections ───────────────────────────────────
+  if (symbolDiffs.length > 0) {
+    sections.push(...generateSymbolSections(symbolDiffs, isJSX));
+  } else {
+    // Fallback: no symbols detected — show brief raw summary
+    if (added.length > 0) {
+      sections.push("### ✅ 추가된 코드\n");
+      sections.push("```");
+      added.slice(0, 10).forEach((l) => sections.push(l));
+      if (added.length > 10) sections.push(`... (+${added.length - 10} lines)`);
+      sections.push("```\n");
     }
-    sections.push("");
-  }
-
-  // ── JSX Structure (JSX only) ─────────────────────────────
-  if (isJSX && jsxTree.length > 0) {
-    sections.push("### 🎨 JSX Structure\n");
-    sections.push("```");
-    sections.push(renderJSXTreeCompact(jsxTree));
-    sections.push("```\n");
+    if (removed.length > 0) {
+      sections.push("### ❌ 제거된 코드\n");
+      sections.push("```");
+      removed.slice(0, 5).forEach((l) => sections.push(l));
+      sections.push("```\n");
+    }
   }
 
   // ── Style Changes (JSX only) ─────────────────────────────
   if (isJSX && classNameChanges.length > 0) {
-    sections.push("### 💅 Style Changes\n");
+    sections.push("### 💅 스타일 변화\n");
     sections.push(...renderStyleChanges(classNameChanges));
     sections.push("");
   }
