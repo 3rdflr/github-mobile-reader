@@ -52,6 +52,7 @@ _Context: `router`_
 
 ## 주요 기능
 
+
 - **함수 단위 요약** — 파일 전체가 아닌 함수/컴포넌트별로 변경 내용을 정리
 - **상태 표시** — ✅ 새로 추가 / ❌ 제거됨 / ✏️ 변경됨
 - **Context 인라인** — 단순 변수 할당(`router`, `user` 등)은 독립 섹션 대신 `_Context: ..._`로 요약
@@ -61,6 +62,7 @@ _Context: `router`_
 - **JSX 시맨틱 패턴** — `🔄 list → <Component>` (map), `⚡ cond && <Component>` (조건부 렌더링)
 - **Gemini AI 요약** (선택) — 복잡한 함수도 1~3줄로 자연어 요약 (`> 💡 ...`)
 - **보안** — 토큰은 환경변수로만 주입; 코드에 하드코딩 불가
+
 
 ---
 
@@ -103,6 +105,7 @@ npx github-mobile-reader --repo owner/repo --all --limit 20
 
 ### 옵션
 
+
 | 플래그          | 기본값            | 설명                                              |
 | --------------- | ----------------- | ------------------------------------------------- |
 | `--repo`        | *(필수)*          | `owner/repo` 형식의 저장소 이름                   |
@@ -111,6 +114,7 @@ npx github-mobile-reader --repo owner/repo --all --limit 20
 | `--out`         | `./reader-output` | 출력 디렉터리 (상대 경로, `..` 불가)              |
 | `--limit`       | `10`              | `--all` 사용 시 최대 PR 수                        |
 | `--gemini-key`  | —                 | Gemini API 키 (또는 `GEMINI_API_KEY` 환경변수)    |
+
 
 토큰: `$GITHUB_TOKEN` 환경변수에서 읽음 (미인증 60 req/hr, 인증 5,000 req/hr)
 
@@ -148,8 +152,8 @@ jobs:
         with:
           fetch-depth: 0
 
-      - name: Generate Reader Markdown
-        uses: 3rdflr/github-mobile-reader@v1
+      - name: Setup Node
+        uses: actions/setup-node@v4
         with:
           github_token: ${{ secrets.GITHUB_TOKEN }}
           base_branch: ${{ github.base_ref }}
