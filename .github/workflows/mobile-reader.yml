@@ -41,5 +41,5 @@ jobs:
             echo "No changes to commit"
           else
             git commit -m "docs(reader): update mobile reader view for PR #${{ github.event.pull_request.number }} [skip ci]"
-            git push
+            git push origin HEAD:${{ github.head_ref }}
           fi
