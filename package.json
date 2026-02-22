@@ -1,6 +1,6 @@
 {
   "name": "github-mobile-reader",
-  "version": "0.1.1",
+  "version": "0.1.2",
   "description": "Transform git diffs into mobile-friendly Markdown — no more horizontal scrolling when reviewing code on your phone.",
   "keywords": [
     "github",
@@ -17,12 +17,12 @@
   },
   "repository": {
     "type": "git",
-    "url": "https://github.com/3rdflr/github-mobile-reader.git"
+    "url": "git+https://github.com/3rdflr/github-mobile-reader.git"
   },
   "license": "MIT",
   "author": "3rdflrhtl@gmail.com",
   "bin": {
-    "github-mobile-reader": "./dist/cli.js"
+    "github-mobile-reader": "dist/cli.js"
   },
   "main": "./dist/index.js",
   "module": "./dist/index.mjs",
