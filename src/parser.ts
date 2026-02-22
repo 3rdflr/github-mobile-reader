@@ -858,14 +858,22 @@ function buildBehaviorSummary(lines: string[], mode: "added" | "removed" = "adde
     // useEffect with deps array
     const effectMatch = line.match(/useEffect\s*\(\s*(?:async\s*)?\(\s*\)\s*=>\s*\{?|useEffect\s*\(\s*\(\s*\)\s*=>/);
     if (effectMatch) {
-      // Try to find deps on same line: useEffect(() => { ... }, [dep1, dep2])
       const depsMatch = line.match(/useEffect[^,]*,\s*\[([^\]]*)\]/);
       if (depsMatch) {
         const deps = depsMatch[1].trim();
-        summary.push(deps.length === 0 ? `\`useEffect\` — 마운트 시 1회 실행` : `\`useEffect\` — [${deps}] 변경 시 실행`);
+        summary.push(deps.length === 0
+          ? `\`useEffect\` 마운트 시 1회 실행`
+          : `\`useEffect\` [${deps}] 변경 시 실행`);
       } else {
         summary.push(`\`useEffect\` 등록`);
       }
+      continue;
+    }
+
+    // Guard clause: if (!x) return / if (x) return
+    const guardMatch = line.match(/^if\s*\((.{1,50})\)\s*return/);
+    if (guardMatch) {
+      summary.push(`(방어) \`${guardMatch[1].trim()}\` 이면 조기 반환`);
       continue;
     }
 
@@ -874,20 +882,20 @@ function buildBehaviorSummary(lines: string[], mode: "added" | "removed" = "adde
     if (hookAssignMatch) {
       const arg = hookAssignMatch[3].trim();
       const argLabel = arg.length > 0 && arg.length <= 30 ? `(${arg})` : "";
-      summary.push(`\`${hookAssignMatch[1]}\` ← \`${hookAssignMatch[2]}${argLabel}\``);
+      summary.push(`(상태) \`${hookAssignMatch[1]}\` ← \`${hookAssignMatch[2]}${argLabel}\``);
       continue;
     }
 
-    // Hook calls (bare, not assigned): useCallback(...), useMemo(...)
+    // Hook calls (bare): useCallback, useMemo, etc.
     const hookMatch = line.match(/^\s*(use[A-Z]\w+)\s*\(/);
-    if (hookMatch) { summary.push(`\`${hookMatch[1]}\` 호출`); continue; }
+    if (hookMatch) { summary.push(`(상태) \`${hookMatch[1]}\` 호출`); continue; }
 
-    // Async/await calls: const x = await foo.bar(arg)
+    // Async/await assigned: const x = await foo(arg)
     const awaitAssignMatch = line.match(/(?:const|let|var)\s+(\w+)\s*=\s*await\s+([\w.]+)\s*\(([^)]{0,40})\)/);
     if (awaitAssignMatch) {
       const arg = awaitAssignMatch[3].trim();
       const argLabel = arg.length > 0 && arg.length <= 25 ? `(${arg})` : "()";
-      summary.push(`\`${awaitAssignMatch[1]}\` ← await \`${awaitAssignMatch[2]}${argLabel}\``);
+      summary.push(`(API 호출) \`${awaitAssignMatch[2]}${argLabel}\` → \`${awaitAssignMatch[1]}\``);
       continue;
     }
 
@@ -896,17 +904,17 @@ function buildBehaviorSummary(lines: string[], mode: "added" | "removed" = "adde
     if (awaitMatch) {
       const arg = awaitMatch[2].trim();
       const argLabel = arg.length > 0 && arg.length <= 25 ? `(${arg})` : "()";
-      summary.push(`await \`${awaitMatch[1]}${argLabel}\``);
+      summary.push(`(API 호출) \`${awaitMatch[1]}${argLabel}\``);
       continue;
     }
 
-    // Conditionals
+    // Conditionals (non-guard)
     const condMatch = line.match(/^(if|else if)\s*\((.{1,60})\)/);
-    if (condMatch) { summary.push(`조건: \`${condMatch[2].trim()}\``); continue; }
+    if (condMatch) { summary.push(`(조건) \`${condMatch[2].trim()}\``); continue; }
 
     // Error handling
     const catchMatch = line.match(/^catch\s*\(\s*(\w+)\s*\)/);
-    if (catchMatch) { summary.push(`에러 처리 (catch \`${catchMatch[1]}\`)`); continue; }
+    if (catchMatch) { summary.push(`(에러 처리) catch \`${catchMatch[1]}\``); continue; }
 
     // Return value (non-trivial, non-JSX)
     const returnMatch = line.match(/^return\s+(.{3,60})/);
@@ -921,11 +929,11 @@ function buildBehaviorSummary(lines: string[], mode: "added" | "removed" = "adde
     if (setStateMatch) {
       const arg = setStateMatch[2].trim();
       const argLabel = arg.length > 0 && arg.length <= 30 ? `(${arg})` : "()";
-      summary.push(`\`${setStateMatch[1]}${argLabel}\` 호출`);
+      summary.push(`(상태 변경) \`${setStateMatch[1]}${argLabel}\``);
       continue;
     }
 
-    // Generic function calls at root level (not keywords)
+    // Generic function calls at root level
     const callMatch = line.match(/^(\w+)\s*\(([^)]{0,40})\)/);
     if (callMatch && !["if", "else", "for", "while", "switch", "catch", "function"].includes(callMatch[1])) {
       const arg = callMatch[2].trim();
