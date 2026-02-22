@@ -26,7 +26,7 @@ jobs:
           node-version: '20'
 
       - name: Generate Reader Markdown
-        run: npx github-mobile-reader@latest --repo ${{ github.repository }} --pr ${{ github.event.pull_request.number }} --out /tmp/reader
+        run: npx github-mobile-reader@latest --repo ${{ github.repository }} --pr ${{ github.event.pull_request.number }} --out ./reader-output
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
@@ -36,7 +36,7 @@ jobs:
         with:
           script: |
             const fs = require('fs');
-            const path = '/tmp/reader/pr-${{ github.event.pull_request.number }}.md';
+            const path = './reader-output/pr-${{ github.event.pull_request.number }}.md';
             if (!fs.existsSync(path)) {
               console.log('No reader file generated, skipping comment.');
               return;
