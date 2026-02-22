@@ -20,7 +20,7 @@ jobs:
         with:
           fetch-depth: 0
 
-      # 2. Install and run the reader
+      # 2. Run the CLI via npx
       - name: Setup Node
         uses: actions/setup-node@v4
         with:
