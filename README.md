@@ -39,12 +39,12 @@ GitHub's mobile web renders code in a fixed-width monospace block. Long lines re
 **✏️ `fetchTasks`** _(Function)_ — changed
   파라미터+ `filter`
   파라미터+ `sortOrder`
-  + (API 호출) `fetchTasks(filter)` → `tasks`
+  + (API) `fetchTasks(filter)` → `tasks`
 
 **✅ `handleFilterChange`** _(Function)_ — added
   파라미터+ `field`
   파라미터+ `value`
-  + (상태 변경) `setFilter({...filter, [field]: value})`
+  + (setState) `setFilter({...filter, [field]: value})`
 ```
 
 ---
@@ -52,8 +52,8 @@ GitHub's mobile web renders code in a fixed-width monospace block. Long lines re
 ## Features
 
 - **Per-function summaries** — each function/component gets its own line with status (added / removed / changed); no headings, normal font size on mobile
-- **Side-effect labels** — behavior lines are prefixed with `(API 호출)`, `(상태 변경)`, `(조건)`, `(에러 처리)`, `(방어)` so you can tell at a glance what kind of change it is
-- **Guard clause detection** — `if (!x) return` patterns surfaced as `(방어) early return` entries
+- **Side-effect labels** — behavior lines are prefixed with `(API)`, `(setState)`, `(state)`, `(cond)`, `(catch)`, `(guard)` so you can tell at a glance what kind of change it is
+- **Guard clause detection** — `if (!x) return` patterns surfaced as `(guard) early return` entries
 - **Import changes** — newly added or removed imports at the file level
 - **Parameter changes** — added or removed function parameters
 - **Variables** — simple variable assignments attached to the nearest function shown inline
@@ -265,17 +265,17 @@ npx github-mobile-reader --repo owner/repo --pr 42 --gemini-key AIzaSy...
 **✏️ `fetchTasks`** _(Function)_ — changed
   파라미터+ `filter`
   파라미터+ `sortOrder`
-  + (방어) `!filter` 이면 조기 반환
-  + (API 호출) `api.getTasks(filter)` → `tasks`
+  + (guard) `!filter` → early return
+  + (API) `api.getTasks(filter)` → `tasks`
 
 **✅ `handleFilterChange`** _(Function)_ — added
   파라미터+ `field`
   파라미터+ `value`
-  + (상태 변경) `setFilter({...filter, [field]: value})`
+  + (setState) `setFilter({...filter, [field]: value})`
 
 **✏️ `TaskCard`** _(Component)_ — changed
   Props+ `dueDate: '...'`
-  + (조건) `!task.completed`
+  + (cond) `!task.completed`
   UI: `<Badge>`
 ```
 
@@ -292,12 +292,13 @@ npx github-mobile-reader --repo owner/repo --pr 42 --gemini-key AIzaSy...
 
 | Prefix | Meaning |
 | --- | --- |
-| `(API 호출)` | `await` call — fetches data from a server or external service |
-| `(상태 변경)` | `setState` call — updates React state |
-| `(상태)` | Hook assignment — `const x = useHook()` |
-| `(조건)` | `if / else if` branch |
-| `(방어)` | Guard clause — `if (!x) return` early-exit pattern |
-| `(에러 처리)` | `catch` block |
+| `(API)` | `await` call — fetches data from a server or external service |
+| `(setState)` | `setState` call — updates React state |
+| `(state)` | Hook assignment — `const x = useHook()` |
+| `(cond)` | `if / else if` branch |
+| `(guard)` | Guard clause — `if (!x) return` early-exit pattern |
+| `(catch)` | `catch` block |
+| `(return)` | Non-trivial return value |
 | `파라미터+` / `파라미터-` | Function parameter added / removed |
 | `Props+` / `Props-` | TypeScript interface/type member added / removed |
 | `UI:` | JSX component added or removed |
