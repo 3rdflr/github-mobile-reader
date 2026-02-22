@@ -690,12 +690,22 @@ export function attributeLinesToSymbols(hunks: DiffHunk[]): SymbolDiff[] {
   const results: SymbolDiff[] = [];
   for (const [name, { added, removed, kind }] of symbolMap) {
     if (added.length === 0 && removed.length === 0) continue;
+
+    // If all removed lines are comments or blank, don't classify as "removed"
+    const meaningfulRemoved = removed.filter(
+      (l) => l.trim().length > 0 && !l.trim().startsWith("//") && !l.trim().startsWith("/*") && !l.trim().startsWith("*"),
+    );
+
+    const effectiveAdded = added.length > 0;
+    const effectiveRemoved = meaningfulRemoved.length > 0;
+
     results.push({
       name,
       kind,
-      status: added.length > 0 && removed.length > 0 ? "modified"
-            : added.length > 0 ? "added"
-            : "removed",
+      status: effectiveAdded && effectiveRemoved ? "modified"
+            : effectiveAdded ? "added"
+            : effectiveRemoved ? "removed"
+            : "modified", // only comment changes → treat as modified (minor)
       addedLines: added,
       removedLines: removed,
     });
@@ -738,14 +748,18 @@ export function extractPropsChanges(
  * Summarize behavioral signals from a set of diff lines.
  * Returns at most 8 human-readable bullet strings.
  */
-function buildBehaviorSummary(lines: string[]): string[] {
+function buildBehaviorSummary(lines: string[], mode: "added" | "removed" = "added"): string[] {
   const summary: string[] = [];
   const normalized = normalizeCode(lines);
 
   for (const line of normalized) {
     // React state: const [x, setX] = useState(...)
     const stateMatch = line.match(/const\s+\[(\w+),\s*set\w+\]\s*=\s*useState/);
-    if (stateMatch) { summary.push(`\`${stateMatch[1]}\` state 추가`); continue; }
+    if (stateMatch) {
+      const label = mode === "removed" ? `\`${stateMatch[1]}\` state 제거` : `\`${stateMatch[1]}\` state 추가`;
+      summary.push(label);
+      continue;
+    }
 
     // Hook calls: useEffect, useCallback, useMemo, etc.
     const hookMatch = line.match(/\b(use[A-Z]\w+)\s*\(/);
@@ -957,7 +971,7 @@ export function generateSymbolSections(
     }
     // What was removed
     if (sym.status !== "added" && sym.removedLines.length > 0) {
-      const removedSummary = buildBehaviorSummary(sym.removedLines);
+      const removedSummary = buildBehaviorSummary(sym.removedLines, "removed");
       removedSummary.slice(0, 4).forEach((l) => sections.push(`- ${l}`));
     }
 
