@@ -5,7 +5,7 @@
  */
 
 const GEMINI_URL =
-  'https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash-lite:generateContent';
+  'https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash-lite:generateContent';
 
 const MAX_DIFF_LINES = 150;
 const TIMEOUT_MS = 10_000;
@@ -13,18 +13,16 @@ const TIMEOUT_MS = 10_000;
 function buildPrompt(filename: string, addedLines: string[]): string {
   const capped = addedLines.slice(0, MAX_DIFF_LINES);
   const code = capped.join('\n');
-  return `다음은 코드 변경 내용입니다.
-파일명: ${filename}
+  return `아래는 "${filename}" 파일의 코드 변경 내용(추가된 라인)입니다.
 
 \`\`\`
 ${code}
 \`\`\`
 
-위 변경 사항을 한국어로 1~3줄로 간결하게 요약해주세요.
-- 이 파일/함수가 무엇을 하는지 핵심만
-- 주요 변경 내용 (추가/제거/수정된 기능)
-- 기술적 용어(함수명, API명, 라이브러리명)는 그대로 사용
-요약 텍스트만 출력하세요. 마크다운, 설명, 접두어 없이.`;
+변경 내용을 한국어로 1~3줄로 요약하세요.
+- 무엇이 추가/수정/제거됐는지
+- 기술적 용어(함수명, API명)는 그대로 사용
+- 파일명 반복 금지. 변경 내용만 출력하세요.`;
 }
 
 /**
@@ -56,7 +54,7 @@ export async function summarizeWithGemini(
       body: JSON.stringify({
         contents: [{ parts: [{ text: prompt }] }],
         generationConfig: {
-          maxOutputTokens: 200,
+          maxOutputTokens: 500,
           temperature: 0.2,
         },
       }),

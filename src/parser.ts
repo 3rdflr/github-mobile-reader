@@ -561,6 +561,96 @@ export function parseDiffToLogicalFlow(diffText: string): ParseResult {
   };
 }
 
+// ── Import change detection ────────────────────────────────────────────────────
+
+/**
+ * Extract named imports from a single import line.
+ * e.g. `import { foo, bar } from 'baz'` → ['foo', 'bar']
+ * e.g. `import DefaultExport from 'baz'` → ['DefaultExport']
+ */
+function extractImportNames(line: string): string[] {
+  const named = line.match(/\{\s*([^}]+)\s*\}/);
+  if (named) {
+    return named[1].split(",").map((s) => s.trim().replace(/\s+as\s+\w+/, "")).filter(Boolean);
+  }
+  const def = line.match(/^import\s+(\w+)\s+from/);
+  if (def) return [def[1]];
+  return [];
+}
+
+/**
+ * Detect newly imported and removed imported names between added/removed lines.
+ */
+export function extractImportChanges(
+  addedLines: string[],
+  removedLines: string[],
+): { added: string[]; removed: string[] } {
+  const getImports = (lines: string[]) =>
+    lines
+      .filter((l) => l.trim().startsWith("import "))
+      .flatMap(extractImportNames);
+
+  const addedImports = new Set(getImports(addedLines));
+  const removedImports = new Set(getImports(removedLines));
+
+  return {
+    added: [...addedImports].filter((i) => !removedImports.has(i)),
+    removed: [...removedImports].filter((i) => !addedImports.has(i)),
+  };
+}
+
+// ── Function parameter change detection ───────────────────────────────────────
+
+/**
+ * Extract parameter names from a function declaration line.
+ * Handles: function foo(a, b, c), const foo = (a, b) =>, const foo = async (a: T, b: T) =>
+ */
+function extractParams(line: string): string[] {
+  // Match the first (...) group
+  const m = line.match(/\(\s*([^)]*)\s*\)/);
+  if (!m || !m[1].trim()) return [];
+  return m[1]
+    .split(",")
+    .map((p) =>
+      p
+        .trim()
+        .replace(/:.*$/, "")   // strip type annotation
+        .replace(/=.*$/, "")   // strip default value
+        .replace(/^\.\.\./,"") // strip rest ...
+        .trim(),
+    )
+    .filter(Boolean);
+}
+
+/**
+ * Compare function parameters between added and removed declaration lines.
+ * Returns { added, removed } param names.
+ */
+export function extractParamChanges(
+  addedLines: string[],
+  removedLines: string[],
+): { added: string[]; removed: string[] } {
+  const DECL_RE = /^(?:export\s+)?(?:async\s+)?(?:function\s+\w+|(?:const|let|var)\s+\w+\s*=\s*(?:async\s*)?\()/;
+
+  const getParams = (lines: string[]): Set<string> => {
+    const result = new Set<string>();
+    for (const line of lines) {
+      if (DECL_RE.test(line.trim())) {
+        extractParams(line).forEach((p) => result.add(p));
+      }
+    }
+    return result;
+  };
+
+  const addedParams = getParams(addedLines);
+  const removedParams = getParams(removedLines);
+
+  return {
+    added: [...addedParams].filter((p) => !removedParams.has(p)),
+    removed: [...removedParams].filter((p) => !addedParams.has(p)),
+  };
+}
+
 // ── Shared symbol detection regexes ───────────────────────────────────────────
 
 // Matches lowercase functions AND ALL_CAPS export functions (e.g. DELETE, GET, POST)
@@ -761,21 +851,40 @@ function buildBehaviorSummary(lines: string[], mode: "added" | "removed" = "adde
       continue;
     }
 
-    // Hook calls: useEffect, useCallback, useMemo, etc.
-    const hookMatch = line.match(/\b(use[A-Z]\w+)\s*\(/);
-    if (hookMatch && !line.includes("=")) { summary.push(`\`${hookMatch[1]}\` 호출`); continue; }
+    // Hook calls: useEffect, useCallback, useMemo, etc. (assigned to variable)
+    const hookAssignMatch = line.match(/const\s+\w+\s*=\s*(use[A-Z]\w+)\s*\(/);
+    if (hookAssignMatch) { summary.push(`\`${hookAssignMatch[1]}\` 호출`); continue; }
+
+    // Hook calls (bare, not assigned)
+    const hookMatch = line.match(/^\s*(use[A-Z]\w+)\s*\(/);
+    if (hookMatch) { summary.push(`\`${hookMatch[1]}\` 호출`); continue; }
 
     // Async/await calls
-    const awaitMatch = line.match(/await\s+([\w.]+\()/);
-    if (awaitMatch) { summary.push(`\`${awaitMatch[1]}\` 비동기 호출`); continue; }
+    const awaitMatch = line.match(/await\s+([\w.]+)\s*\(/);
+    if (awaitMatch) { summary.push(`\`${awaitMatch[1]}()\` 비동기 호출`); continue; }
 
     // Conditionals
-    const condMatch = line.match(/^(if|else if)\s*\((.{1,40})\)/);
-    if (condMatch) { summary.push(`조건: ${condMatch[2]}`); continue; }
+    const condMatch = line.match(/^(if|else if)\s*\((.{1,50})\)/);
+    if (condMatch) { summary.push(`조건: ${condMatch[2].trim()}`); continue; }
+
+    // Error handling
+    const catchMatch = line.match(/^catch\s*\(\s*(\w+)\s*\)/);
+    if (catchMatch) { summary.push(`에러 처리 (catch \`${catchMatch[1]}\`)`); continue; }
+
+    // Return value (non-trivial)
+    const returnMatch = line.match(/^return\s+(.{3,50})/);
+    if (returnMatch && !returnMatch[1].startsWith("<") && !returnMatch[1].startsWith("{")) {
+      summary.push(`반환: \`${returnMatch[1].trim().replace(/[;,]$/, "")}\``);
+      continue;
+    }
+
+    // setState calls: setFoo(...)
+    const setStateMatch = line.match(/^(set[A-Z]\w+)\s*\(/);
+    if (setStateMatch) { summary.push(`\`${setStateMatch[1]}()\` 호출`); continue; }
 
     // Generic function calls at root level
-    const callMatch = line.match(/^(\w+)\(/);
-    if (callMatch && !["if", "for", "while", "switch", "catch"].includes(callMatch[1])) {
+    const callMatch = line.match(/^(\w+)\s*\(/);
+    if (callMatch && !["if", "else", "for", "while", "switch", "catch", "function"].includes(callMatch[1])) {
       summary.push(`\`${callMatch[1]}()\` 호출`);
     }
   }
@@ -948,17 +1057,29 @@ export function generateSymbolSections(
       `### ${STATUS_ICON[sym.status]} \`${sym.name}\` _(${kindLabel})_ — ${STATUS_LABEL[sym.status]}`,
     );
 
-    // Inline Context line for setup variables / hooks
+    // "변수 추가" — setup variables / hooks attached to this symbol
     if (setupNames.length > 0) {
-      sections.push(`_Context: ${setupNames.map((n) => `\`${n}\``).join(", ")}_`);
+      sections.push(`변수 추가: ${setupNames.map((n) => `\`${n}\``).join(", ")}`);
     }
 
-    // Props / interface changes
+    // Function parameter changes
+    const paramChanges = extractParamChanges(sym.addedLines, sym.removedLines);
+    if (paramChanges.added.length > 0 || paramChanges.removed.length > 0) {
+      sections.push("**파라미터 변화**");
+      paramChanges.added.forEach((p) => sections.push(`+ \`${p}\``));
+      paramChanges.removed.forEach((p) => sections.push(`- \`${p}\` (제거됨)`));
+    }
+
+    // Props / interface changes — show key only if value is a long string literal
     const props = extractPropsChanges(sym.addedLines, sym.removedLines);
     if (props.added.length > 0 || props.removed.length > 0) {
       sections.push("**Props 변화**");
-      props.added.forEach((p) => sections.push(`+ \`${p}\``));
-      props.removed.forEach((p) => sections.push(`- \`${p}\` (제거됨)`));
+      const abbreviateProp = (p: string) => {
+        // "key: 'long string value'" → "key: '...'"
+        return p.replace(/^(\w[\w?]*:\s*)(['"`])(.{20,})(\2)$/, "$1$2...$2");
+      };
+      props.added.forEach((p) => sections.push(`+ \`${abbreviateProp(p)}\``));
+      props.removed.forEach((p) => sections.push(`- \`${abbreviateProp(p)}\` (제거됨)`));
     }
 
     // Behavioral summary for added logic
@@ -972,7 +1093,11 @@ export function generateSymbolSections(
     // What was removed
     if (sym.status !== "added" && sym.removedLines.length > 0) {
       const removedSummary = buildBehaviorSummary(sym.removedLines, "removed");
-      removedSummary.slice(0, 4).forEach((l) => sections.push(`- ${l}`));
+      if (removedSummary.length > 0) {
+        // Only add header if not already under 동작 변화
+        if (sym.status === "removed") sections.push("**동작 변화**");
+        removedSummary.slice(0, 4).forEach((l) => sections.push(`- ${l}`));
+      }
     }
 
     // JSX element diff (map 🔄, conditional ⚡, new/removed tags)
@@ -1085,6 +1210,15 @@ export function generateReaderMarkdown(
   const classNameChanges = isJSX ? parseClassNameChanges(added, removed) : [];
 
   const sections: string[] = [];
+
+  // ── File-level import changes ─────────────────────────────
+  const fileImportChanges = extractImportChanges(added, removed);
+  if (fileImportChanges.added.length > 0 || fileImportChanges.removed.length > 0) {
+    sections.push("**Import 변화**");
+    fileImportChanges.added.forEach((i) => sections.push(`+ \`${i}\``));
+    fileImportChanges.removed.forEach((i) => sections.push(`- \`${i}\` (제거됨)`));
+    sections.push("");
+  }
 
   // ── Per-symbol sections ───────────────────────────────────
   if (symbolDiffs.length > 0) {
