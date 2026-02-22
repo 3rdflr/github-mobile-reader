@@ -1,6 +1,6 @@
 {
   "name": "github-mobile-reader",
-  "version": "0.1.4",
+  "version": "0.1.5",
   "description": "Transform git diffs into mobile-friendly Markdown — no more horizontal scrolling when reviewing code on your phone.",
   "keywords": [
     "github",
