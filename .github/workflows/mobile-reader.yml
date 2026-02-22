@@ -5,8 +5,8 @@ on:
     types: [opened, synchronize, reopened]
 
 permissions:
-  contents: write        # commit the generated .md file
-  pull-requests: write   # post PR comment
+  contents: write # commit the generated .md file
+  pull-requests: write # post PR comment
 
 jobs:
   generate-reader:
@@ -20,15 +20,16 @@ jobs:
         with:
           fetch-depth: 0
 
-      # 2. Run the reader action
-      - name: Generate Reader Markdown
-        uses: your-org/github-mobile-reader@v1     # ← update after publishing
+      # 2. Install and run the reader
+      - name: Setup Node
+        uses: actions/setup-node@v4
         with:
-          github_token: ${{ secrets.GITHUB_TOKEN }}
-          base_branch: ${{ github.base_ref }}
-          output_dir: docs/reader
+          node-version: '20'
+
+      - name: Generate Reader Markdown
+        run: npx github-mobile-reader@latest --repo ${{ github.repository }} --pr ${{ github.event.pull_request.number }} --out docs/reader
         env:
-          PR_NUMBER: ${{ github.event.pull_request.number }}
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
       # 3. Commit the generated file back to the PR branch
       - name: Commit Reader Markdown
