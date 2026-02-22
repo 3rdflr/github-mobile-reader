@@ -25,45 +25,41 @@ GitHub's mobile web renders code in a fixed-width monospace block. Long lines re
 ```markdown
 ## 📄 `src/components/TodoList.tsx`
 
-> 💡 Filter controls added to TodoList. Tasks can now be filtered by status
-> and sorted by due date. The fetchTasks function is updated to accept filter params.
+> 💡 Previously fetched all tasks unconditionally. Now accepts filter and sortOrder
+> params — fetchTasks is called conditionally and filter state drives re-fetching.
 
 **Import changes**
 + `FilterBar`
 + `useSortedTasks`
 - `LegacyLoader` (removed)
 
-### ✏️ `TodoList` _(Component)_ — changed
-Variables added: `filter`, `sortOrder`
+**✏️ `TodoList`** _(Component)_ — changed
+  변수: `filter`, `sortOrder`
 
-### ✏️ `fetchTasks` _(Function)_ — changed
-**Parameters**
-+ `filter`
-+ `sortOrder`
-**Behavior**
-+ `fetchTasks()` async call
+**✏️ `fetchTasks`** _(Function)_ — changed
+  파라미터+ `filter`
+  파라미터+ `sortOrder`
+  + (API) `fetchTasks(filter)` → `tasks`
 
-### ✅ `handleFilterChange` _(Function)_ — added
-**Parameters**
-+ `field`
-+ `value`
-**Behavior**
-+ `setFilter()` called
+**✅ `handleFilterChange`** _(Function)_ — added
+  파라미터+ `field`
+  파라미터+ `value`
+  + (setState) `setFilter({...filter, [field]: value})`
 ```
 
 ---
 
 ## Features
 
-- **Per-function summaries** — each function/component gets its own section with status (added / removed / changed)
-- **Import changes** — detects newly added or removed imports at the file level
-- **Parameter changes** — detects added or removed function parameters
-- **Variables added** — simple variable assignments attached to the nearest function shown inline
-- **Behavior changes** — detects hook calls, setState, async/await calls, conditionals, error handling, return values
-- **UI changes** — detects added/removed JSX components (generic tags like `div`, `span` are filtered)
-- **Props changes** — detects TypeScript interface/type modifications (long string values abbreviated to `'...'`)
-- **JSX semantic patterns** — `🔄 list → <Component>` (map), `⚡ cond && <Component>` (conditional rendering)
-- **Gemini AI summaries** (optional) — 1–3 sentence natural language summary per file (`> 💡 ...`)
+- **Per-function summaries** — each function/component gets its own line with status (added / removed / changed); no headings, normal font size on mobile
+- **Side-effect labels** — behavior lines are prefixed with `(API)`, `(setState)`, `(state)`, `(cond)`, `(catch)`, `(guard)` so you can tell at a glance what kind of change it is
+- **Guard clause detection** — `if (!x) return` patterns surfaced as `(guard) early return` entries
+- **Import changes** — newly added or removed imports at the file level
+- **Parameter changes** — added or removed function parameters
+- **Variables** — simple variable assignments attached to the nearest function shown inline
+- **UI changes** — added/removed JSX components (generic tags like `div`, `span` are filtered); map (`🔄`) and conditional (`⚡`) patterns
+- **Props changes** — TypeScript interface/type member changes (long string values abbreviated to `'...'`)
+- **Gemini AI summaries** (optional) — focuses on business logic change and side effects, not raw lines (`> 💡 ...`)
 - **Secure by default** — tokens are injected via environment variables only; no flag that leaks to shell history
 
 ---
@@ -253,37 +249,34 @@ npx github-mobile-reader --repo owner/repo --pr 42 --gemini-key AIzaSy...
 
 ## 📄 `src/components/TodoList.tsx`
 
-> 💡 AI-generated 1–3 sentence summary (when GEMINI_API_KEY is set)
+> 💡 Previously fetched all tasks unconditionally. Now accepts filter and sortOrder
+> params — fetchTasks is called conditionally and filter state drives re-fetching.
 
 **Import changes**
 + `FilterBar`
 + `useSortedTasks`
 - `LegacyLoader` (removed)
 
-### ✏️ `TodoList` _(Component)_ — changed
-Variables added: `filter`, `sortOrder`
+**✏️ `TodoList`** _(Component)_ — changed
+  변수: `filter`, `sortOrder`
+  + (상태) `filter` ← `useState({})`
+  + `useEffect` [filter] 변경 시 실행
 
-### ✏️ `fetchTasks` _(Function)_ — changed
-**Parameters**
-+ `filter`
-+ `sortOrder`
-**Behavior**
-+ `fetchTasks()` async call
+**✏️ `fetchTasks`** _(Function)_ — changed
+  파라미터+ `filter`
+  파라미터+ `sortOrder`
+  + (guard) `!filter` → early return
+  + (API) `api.getTasks(filter)` → `tasks`
 
-### ✅ `handleFilterChange` _(Function)_ — added
-**Parameters**
-+ `field`
-+ `value`
-**Behavior**
-+ `setFilter()` called
+**✅ `handleFilterChange`** _(Function)_ — added
+  파라미터+ `field`
+  파라미터+ `value`
+  + (setState) `setFilter({...filter, [field]: value})`
 
-### ✏️ `TaskCard` _(Component)_ — changed
-**Props**
-+ `dueDate: '...'`
-**Behavior**
-+ condition: !task.completed
-**UI**
-+ `<Badge>`
+**✏️ `TaskCard`** _(Component)_ — changed
+  Props+ `dueDate: '...'`
+  + (cond) `!task.completed`
+  UI: `<Badge>`
 ```
 
 ### Symbol classification
@@ -293,17 +286,22 @@ Variables added: `filter`, `sortOrder`
 | `✅ ... — added` | Function/component newly introduced in the diff |
 | `❌ ... — removed` | Function/component deleted in the diff |
 | `✏️ ... — changed` | Existing function/component with modified content |
-| `Variables added: x, y` | Simple variable assignments collapsed inline |
+| `변수: x, y` | Simple variable assignments collapsed inline |
 
-### Section types
+### Line prefixes
 
-| Section | What it shows |
+| Prefix | Meaning |
 | --- | --- |
-| **Import changes** | Added or removed `import` statements at the file level |
-| **Parameters** | Added or removed function parameters |
-| **Props** | TypeScript interface/type member changes (values > 20 chars shown as `'...'`) |
-| **Behavior** | Hook calls, setState, async/await, conditions, catch blocks, return values |
-| **UI** | Added/removed meaningful JSX components; map (`🔄`) and conditional (`⚡`) patterns |
+| `(API)` | `await` call — fetches data from a server or external service |
+| `(setState)` | `setState` call — updates React state |
+| `(state)` | Hook assignment — `const x = useHook()` |
+| `(cond)` | `if / else if` branch |
+| `(guard)` | Guard clause — `if (!x) return` early-exit pattern |
+| `(catch)` | `catch` block |
+| `(return)` | Non-trivial return value |
+| `파라미터+` / `파라미터-` | Function parameter added / removed |
+| `Props+` / `Props-` | TypeScript interface/type member added / removed |
+| `UI:` | JSX component added or removed |
 
 ---
 
