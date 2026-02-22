@@ -38,9 +38,13 @@ data
 
 - **Zero-dependency core** — the parser runs anywhere Node.js ≥ 18 is available
 - **Dual output format** — CJS (`require`) and ESM (`import`) with full TypeScript types
+- **CLI** — `npx github-mobile-reader --repo owner/repo --pr 42` fetches and converts any PR instantly
 - **GitHub Action** — drop one YAML block into any repo and get auto-generated Reader docs on every PR
+- **File-by-file output** — each changed JS/TS file gets its own independent section in the output
+- **JSX/Tailwind aware** — `.jsx`/`.tsx` files get a component tree (`🎨 JSX Structure`) and a Tailwind class diff (`💅 Style Changes`) instead of one unreadable blob
 - **Tracks both sides of a diff** — shows added _and_ removed code in separate sections
 - **Conservative by design** — when a pattern is ambiguous, the library shows less rather than showing something wrong
+- **Secure by default** — token is read from `$GITHUB_TOKEN` only; no flag that leaks to shell history or `ps`
 
 ---
 
@@ -48,13 +52,14 @@ data
 
 1. [Quick Start](#quick-start)
 2. [Language Support](#language-support)
-3. [GitHub Action (recommended)](#github-action-recommended)
-4. [npm Library Usage](#npm-library-usage)
-5. [Output Format](#output-format)
-6. [API Reference](#api-reference)
-7. [How the Parser Works](#how-the-parser-works)
-8. [Contributing](#contributing)
-9. [License](#license)
+3. [CLI Usage](#cli-usage)
+4. [GitHub Action (recommended)](#github-action-recommended)
+5. [npm Library Usage](#npm-library-usage)
+6. [Output Format](#output-format)
+7. [API Reference](#api-reference)
+8. [How the Parser Works](#how-the-parser-works)
+9. [Contributing](#contributing)
+10. [License](#license)
 
 ---
 
@@ -126,6 +131,67 @@ Each adapter will declare:
 - Chaining notation (dot vs. arrow `->`)
 
 If you'd like to contribute an adapter for your language, see [Contributing](#contributing).
+
+---
+
+## CLI Usage
+
+Run `github-mobile-reader` directly from your terminal — no setup, no config file. It fetches a PR diff from GitHub, converts it to mobile-friendly Markdown, and saves one file per PR to `./reader-output/`.
+
+### Authentication
+
+Set your GitHub token as an environment variable **before** running the CLI:
+
+```bash
+export GITHUB_TOKEN=ghp_xxxx
+npx github-mobile-reader --repo owner/repo --pr 42
+```
+
+> **Security note:** The CLI does not accept a `--token` flag. Passing secrets as command-line arguments exposes them in shell history and `ps` output. Always use the environment variable.
+
+### Single PR
+
+```bash
+npx github-mobile-reader --repo owner/repo --pr 42
+```
+
+### All recent PRs
+
+```bash
+npx github-mobile-reader --repo owner/repo --all
+```
+
+### Options
+
+| Flag      | Default           | Description                                       |
+| --------- | ----------------- | ------------------------------------------------- |
+| `--repo`  | *(required)*      | Repository in `owner/repo` format                 |
+| `--pr`    | —                 | Process a single PR by number                     |
+| `--all`   | —                 | Process all recent PRs (use with `--limit`)       |
+| `--out`   | `./reader-output` | Output directory — relative paths only, no `..`   |
+| `--limit` | `10`              | Max number of PRs to fetch when using `--all`     |
+
+Token: read from `$GITHUB_TOKEN` environment variable (60 req/hr unauthenticated, 5 000 req/hr authenticated).
+
+### Output
+
+Each PR produces one file: `reader-output/pr-<number>.md`.
+
+Inside that file, every changed JS/TS file gets its own section. JSX/TSX files get two extra sections:
+
+```
+# 📖 PR #42 — My Feature
+
+## 📄 `src/App.tsx`
+
+### 🧠 Logical Flow   ← JS logic tree
+### 🎨 JSX Structure  ← component hierarchy (JSX/TSX only)
+### 💅 Style Changes  ← added/removed Tailwind classes (JSX/TSX only)
+### ✅ Added Code
+### ❌ Removed Code
+```
+
+> **Note:** `reader-output/` is gitignored by default — the generated files are local only and not committed to your repository.
 
 ---
 
@@ -482,8 +548,10 @@ github-mobile-reader/
 ├── src/
 │   ├── parser.ts     ← core diff → logical flow parser
 │   ├── index.ts      ← public npm API surface
-│   └── action.ts     ← GitHub Action entry point
+│   ├── action.ts     ← GitHub Action entry point
+│   └── cli.ts        ← CLI entry point (npx github-mobile-reader)
 ├── dist/             ← compiled output (auto-generated, do not edit)
+├── reader-output/    ← CLI output directory (gitignored)
 ├── .github/
 │   └── workflows/
 │       └── mobile-reader.yml   ← example workflow for consumers

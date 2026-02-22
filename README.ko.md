@@ -40,9 +40,13 @@ data
 
 - **의존성 제로 코어** — 파서는 Node.js ≥ 18이 있는 어디서나 동작합니다
 - **이중 출력 포맷** — CJS (`require`)와 ESM (`import`) 모두 지원, TypeScript 타입 포함
+- **CLI** — `npx github-mobile-reader --repo owner/repo --pr 42` 로 어떤 PR이든 즉시 변환
 - **GitHub Action** — 레포에 YAML 파일 하나만 추가하면 PR마다 Reader 문서가 자동 생성됩니다
+- **파일별 분리 출력** — 변경된 JS/TS 파일마다 독립적인 섹션으로 출력
+- **JSX/Tailwind 인식** — `.jsx`/`.tsx` 파일은 컴포넌트 트리(`🎨 JSX Structure`)와 Tailwind 클래스 diff(`💅 Style Changes`)를 별도 섹션으로 분리 출력
 - **양방향 diff 추적** — 추가된 코드와 삭제된 코드를 각각 별도 섹션으로 표시
 - **보수적 설계** — 패턴이 애매할 때는 잘못된 정보를 보여주는 대신 덜 보여줍니다
+- **보안 기본값** — 토큰은 `$GITHUB_TOKEN` 환경변수로만 읽음 — 셸 히스토리나 `ps` 목록에 노출되는 `--token` 플래그 없음
 
 ---
 
@@ -50,13 +54,75 @@ data
 
 1. [빠른 시작](#빠른-시작)
 2. [언어 지원](#언어-지원)
-3. [GitHub Action (권장)](#github-action-권장)
-4. [npm 라이브러리 사용법](#npm-라이브러리-사용법)
-5. [출력 형식](#출력-형식)
-6. [API 레퍼런스](#api-레퍼런스)
-7. [파서 동작 원리](#파서-동작-원리)
-8. [기여하기](#기여하기)
-9. [라이선스](#라이선스)
+3. [CLI 사용법](#cli-사용법)
+4. [GitHub Action (권장)](#github-action-권장)
+5. [npm 라이브러리 사용법](#npm-라이브러리-사용법)
+6. [출력 형식](#출력-형식)
+7. [API 레퍼런스](#api-레퍼런스)
+8. [파서 동작 원리](#파서-동작-원리)
+9. [기여하기](#기여하기)
+10. [라이선스](#라이선스)
+
+---
+
+## CLI 사용법
+
+터미널에서 `github-mobile-reader`를 바로 실행할 수 있습니다 — 별도 설정 파일 불필요. GitHub에서 PR diff를 받아 모바일 친화적인 Markdown으로 변환하고 `./reader-output/`에 PR별로 파일을 저장합니다.
+
+### 인증 (토큰 설정)
+
+CLI 실행 **전에** 환경변수로 GitHub 토큰을 설정하세요:
+
+```bash
+export GITHUB_TOKEN=ghp_xxxx
+npx github-mobile-reader --repo owner/repo --pr 42
+```
+
+> **보안 안내:** CLI는 `--token` 플래그를 지원하지 않습니다. 커맨드라인 인자로 시크릿을 전달하면 셸 히스토리와 `ps` 출력에 토큰이 노출됩니다. 반드시 환경변수를 사용하세요.
+
+### 단일 PR
+
+```bash
+npx github-mobile-reader --repo owner/repo --pr 42
+```
+
+### 최근 PR 전체
+
+```bash
+npx github-mobile-reader --repo owner/repo --all
+```
+
+### 옵션
+
+| 플래그      | 기본값             | 설명                                                    |
+| ----------- | ------------------ | ------------------------------------------------------- |
+| `--repo`    | *(필수)*           | `owner/repo` 형식의 레포지토리                          |
+| `--pr`      | —                  | 특정 PR 번호 하나 처리                                  |
+| `--all`     | —                  | 최근 PR 전체 처리 (`--limit`와 함께 사용)               |
+| `--out`     | `./reader-output`  | 생성된 `.md` 파일 저장 경로 — 상대 경로만 허용, `..` 불가 |
+| `--limit`   | `10`               | `--all` 사용 시 가져올 PR 최대 개수                     |
+
+토큰: `$GITHUB_TOKEN` 환경변수에서 읽음 (미인증 시 60 req/hr, 인증 시 5 000 req/hr).
+
+### 출력 결과
+
+PR마다 `reader-output/pr-<번호>.md` 파일 하나가 생성됩니다.
+
+JSX/TSX 파일은 추가 섹션이 생성됩니다:
+
+```
+# 📖 PR #42 — My Feature
+
+## 📄 `src/App.tsx`
+
+### 🧠 Logical Flow   ← JS 로직 트리
+### 🎨 JSX Structure  ← 컴포넌트 계층 구조 (JSX/TSX 전용)
+### 💅 Style Changes  ← 추가/제거된 Tailwind 클래스 (JSX/TSX 전용)
+### ✅ Added Code
+### ❌ Removed Code
+```
+
+> **참고:** `reader-output/`는 기본적으로 `.gitignore`에 포함되어 있습니다 — 생성된 파일은 로컬에만 저장되며 레포지토리에 커밋되지 않습니다.
 
 ---
 
@@ -487,8 +553,10 @@ github-mobile-reader/
 │   ├── parser.ts     ← 핵심 diff → logical flow 파서
 │   ├── index.ts      ← npm 공개 API
 │   ├── action.ts     ← GitHub Action 진입점
+│   ├── cli.ts        ← CLI 진입점 (npx github-mobile-reader)
 │   └── test.ts       ← 스모크 테스트 (33개)
 ├── dist/             ← 컴파일 결과물 (자동 생성, 수정 금지)
+├── reader-output/    ← CLI 출력 디렉토리 (gitignore됨)
 ├── .github/
 │   └── workflows/
 │       └── mobile-reader.yml   ← 사용자용 예시 워크플로우
