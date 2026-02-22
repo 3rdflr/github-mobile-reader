@@ -37,6 +37,197 @@ export interface ReaderMarkdownMeta {
   repo?: string;
 }
 
+export interface ClassNameChange {
+  component: string;
+  added: string[];
+  removed: string[];
+}
+
+// ── JSX / Tailwind helpers ─────────────────────────────────────────────────────
+
+export function isJSXFile(filename: string): boolean {
+  return /\.(jsx|tsx)$/.test(filename);
+}
+
+export function hasJSXContent(lines: string[]): boolean {
+  return lines.some(l => /<[A-Z][A-Za-z]*[\s/>]/.test(l) || /return\s*\(/.test(l));
+}
+
+export function isClassNameOnlyLine(line: string): boolean {
+  return /^className=/.test(line.trim());
+}
+
+export function extractClassName(line: string): string | null {
+  // Static: className="flex items-center gap-2"
+  const staticMatch = line.match(/className="([^"]*)"/);
+  if (staticMatch) return staticMatch[1];
+
+  // Ternary: className={isDark ? "bg-gray-900" : "bg-white"}
+  const ternaryMatch = line.match(/className=\{[^?]+\?\s*"([^"]*)"\s*:\s*"([^"]*)"\}/);
+  if (ternaryMatch) return `${ternaryMatch[1]} ${ternaryMatch[2]}`;
+
+  // Template literal: className={`base ${condition ? "a" : "b"}`}
+  const templateMatch = line.match(/className=\{`([^`]*)`\}/);
+  if (templateMatch) {
+    const raw = templateMatch[1];
+    const literals = raw.replace(/\$\{[^}]*\}/g, ' ').trim();
+    const exprStrings = [...raw.matchAll(/"([^"]*)"/g)].map(m => m[1]);
+    return [literals, ...exprStrings].filter(Boolean).join(' ');
+  }
+
+  return null;
+}
+
+export function extractComponentFromLine(line: string): string {
+  const tagMatch = line.match(/<([A-Za-z][A-Za-z0-9.]*)/);
+  if (tagMatch) return tagMatch[1];
+  return 'unknown';
+}
+
+export function parseClassNameChanges(
+  addedLines: string[],
+  removedLines: string[]
+): ClassNameChange[] {
+  const componentMap = new Map<string, { added: Set<string>; removed: Set<string> }>();
+
+  for (const line of addedLines.filter(l => /className=/.test(l))) {
+    const cls = extractClassName(line);
+    const comp = extractComponentFromLine(line);
+    if (!cls) continue;
+    if (!componentMap.has(comp)) componentMap.set(comp, { added: new Set(), removed: new Set() });
+    cls.split(/\s+/).filter(Boolean).forEach(c => componentMap.get(comp)!.added.add(c));
+  }
+
+  for (const line of removedLines.filter(l => /className=/.test(l))) {
+    const cls = extractClassName(line);
+    const comp = extractComponentFromLine(line);
+    if (!cls) continue;
+    if (!componentMap.has(comp)) componentMap.set(comp, { added: new Set(), removed: new Set() });
+    cls.split(/\s+/).filter(Boolean).forEach(c => componentMap.get(comp)!.removed.add(c));
+  }
+
+  const changes: ClassNameChange[] = [];
+  for (const [comp, { added, removed }] of componentMap) {
+    const pureAdded = [...added].filter(c => !removed.has(c));
+    const pureRemoved = [...removed].filter(c => !added.has(c));
+    if (pureAdded.length === 0 && pureRemoved.length === 0) continue;
+    changes.push({ component: comp, added: pureAdded, removed: pureRemoved });
+  }
+
+  return changes;
+}
+
+export function renderStyleChanges(changes: ClassNameChange[]): string[] {
+  const lines: string[] = [];
+  for (const change of changes) {
+    lines.push(`**${change.component}**`);
+    if (change.added.length > 0) lines.push(`  + ${change.added.join('  ')}`);
+    if (change.removed.length > 0) lines.push(`  - ${change.removed.join('  ')}`);
+  }
+  return lines;
+}
+
+// ── JSX Structure helpers ──────────────────────────────────────────────────────
+
+export function isJSXElement(line: string): boolean {
+  const t = line.trim();
+  return /^<[A-Za-z]/.test(t) || /^<\/[A-Za-z]/.test(t);
+}
+
+export function isJSXClosing(line: string): boolean {
+  return /^<\/[A-Za-z]/.test(line.trim());
+}
+
+export function isJSXSelfClosing(line: string): boolean {
+  return /\/>[\s]*$/.test(line.trim());
+}
+
+export function extractJSXComponentName(line: string): string {
+  const trimmed = line.trim();
+
+  const closingMatch = trimmed.match(/^<\/([A-Za-z][A-Za-z0-9.]*)/);
+  if (closingMatch) return `/${closingMatch[1]}`;
+
+  const nameMatch = trimmed.match(/^<([A-Za-z][A-Za-z0-9.]*)/);
+  if (!nameMatch) return trimmed;
+  const name = nameMatch[1];
+
+  // Collect event handler props (onClick, onChange, etc.)
+  const eventProps: string[] = [];
+  for (const m of trimmed.matchAll(/\b(on[A-Z]\w+)=/g)) {
+    eventProps.push(m[1]);
+  }
+
+  return eventProps.length > 0 ? `${name}(${eventProps.join(', ')})` : name;
+}
+
+export function shouldIgnoreJSX(line: string): boolean {
+  const t = line.trim();
+  return (
+    isClassNameOnlyLine(t) ||
+    /^style=/.test(t) ||
+    /^aria-/.test(t) ||
+    /^data-/.test(t) ||
+    /^strokeLinecap=/.test(t) ||
+    /^strokeLinejoin=/.test(t) ||
+    /^strokeWidth=/.test(t) ||
+    /^viewBox=/.test(t) ||
+    /^fill=/.test(t) ||
+    /^stroke=/.test(t) ||
+    /^d="/.test(t) ||
+    t === '{' || t === '}' ||
+    t === '(' || t === ')' ||
+    t === '<>' || t === '</>' ||
+    /^\{\/\*/.test(t)
+  );
+}
+
+export function parseJSXToFlowTree(lines: string[]): FlowNode[] {
+  const roots: FlowNode[] = [];
+  const stack: Array<{ node: FlowNode; depth: number }> = [];
+
+  for (const line of lines) {
+    if (!isJSXElement(line)) continue;
+    if (shouldIgnoreJSX(line)) continue;
+
+    const depth = getIndentDepth(line);
+
+    if (isJSXClosing(line)) {
+      while (stack.length > 0 && stack[stack.length - 1].depth >= depth) {
+        stack.pop();
+      }
+      continue;
+    }
+
+    const name = extractJSXComponentName(line);
+    const selfClosing = isJSXSelfClosing(line);
+
+    const node: FlowNode = {
+      type: 'call',
+      name,
+      children: [],
+      depth,
+      priority: Priority.OTHER,
+    };
+
+    while (stack.length > 0 && stack[stack.length - 1].depth >= depth) {
+      stack.pop();
+    }
+
+    if (stack.length === 0) {
+      roots.push(node);
+    } else {
+      stack[stack.length - 1].node.children.push(node);
+    }
+
+    if (!selfClosing) {
+      stack.push({ node, depth });
+    }
+  }
+
+  return roots;
+}
+
 /**
  * Step 1: Filter diff lines — added (+) and removed (-) separately
  */
@@ -328,8 +519,29 @@ export function generateReaderMarkdown(
   diffText: string,
   meta: ReaderMarkdownMeta = {}
 ): string {
-  const result = parseDiffToLogicalFlow(diffText);
+  const { added, removed } = filterDiffLines(diffText);
+
+  // ── Detect JSX mode ──────────────────────────────────────
+  const isJSX = Boolean(
+    (meta.file && isJSXFile(meta.file)) || hasJSXContent(added)
+  );
+
+  // ── Parse logical flow (strip className lines in JSX mode) ──
+  const addedForFlow = isJSX ? added.filter(l => !isClassNameOnlyLine(l)) : added;
+  const normalizedAdded = normalizeCode(addedForFlow);
+  const flowTree = parseToFlowTree(normalizedAdded);
+
+  // ── Raw code (className stripped in JSX mode) ────────────
+  const rawCode = addedForFlow.join('\n');
+  const removedForCode = isJSX ? removed.filter(l => !isClassNameOnlyLine(l)) : removed;
+  const removedCode = removedForCode.join('\n');
+
+  // ── JSX-specific analysis ────────────────────────────────
+  const classNameChanges = isJSX ? parseClassNameChanges(added, removed) : [];
+  const jsxTree = isJSX ? parseJSXToFlowTree(added) : [];
+
   const sections: string[] = [];
+  const lang = isJSX ? 'tsx' : 'typescript';
 
   // ── Header ──────────────────────────────────────────────
   sections.push('# 📖 GitHub Reader View\n');
@@ -340,27 +552,42 @@ export function generateReaderMarkdown(
   if (meta.file)   sections.push(`> File: \`${meta.file}\``);
   sections.push('\n');
 
-  // ── Logical Flow (added) ─────────────────────────────────
-  if (result.root.length > 0) {
+  // ── Logical Flow ─────────────────────────────────────────
+  if (flowTree.length > 0) {
     sections.push('## 🧠 Logical Flow\n');
     sections.push('```');
-    sections.push(...renderFlowTree(result.root));
+    sections.push(...renderFlowTree(flowTree));
     sections.push('```\n');
   }
 
+  // ── JSX Structure (JSX only) ─────────────────────────────
+  if (isJSX && jsxTree.length > 0) {
+    sections.push('## 🎨 JSX Structure\n');
+    sections.push('```');
+    sections.push(...renderFlowTree(jsxTree));
+    sections.push('```\n');
+  }
+
+  // ── Style Changes (JSX only) ─────────────────────────────
+  if (isJSX && classNameChanges.length > 0) {
+    sections.push('## 💅 Style Changes\n');
+    sections.push(...renderStyleChanges(classNameChanges));
+    sections.push('');
+  }
+
   // ── Added Code ───────────────────────────────────────────
-  if (result.rawCode.trim()) {
+  if (rawCode.trim()) {
     sections.push('## ✅ Added Code\n');
-    sections.push('```typescript');
-    sections.push(result.rawCode);
+    sections.push(`\`\`\`${lang}`);
+    sections.push(rawCode);
     sections.push('```\n');
   }
 
   // ── Removed Code ─────────────────────────────────────────
-  if (result.removedCode.trim()) {
+  if (removedCode.trim()) {
     sections.push('## ❌ Removed Code\n');
-    sections.push('```typescript');
-    sections.push(result.removedCode);
+    sections.push(`\`\`\`${lang}`);
+    sections.push(removedCode);
     sections.push('```\n');
   }
 
