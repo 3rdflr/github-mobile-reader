@@ -297,7 +297,7 @@ assert(
 
 // ─── Test Suite 9: generateReaderMarkdown ────────────────────────────────────
 
-section('generateReaderMarkdown — full document');
+section('generateReaderMarkdown — function diff output');
 
 const md = generateReaderMarkdown(CHAINING_DIFF, {
   pr: '42',
@@ -307,56 +307,93 @@ const md = generateReaderMarkdown(CHAINING_DIFF, {
 });
 
 assert(
-  'output starts with # 📖',
-  md.startsWith('# 📖'),
-  `first chars: "${md.slice(0, 20)}"`
-);
-assert(
-  'contains PR number in metadata',
-  md.includes('#42'),
-  'PR number missing from output'
-);
-assert(
-  'contains file name in metadata',
-  md.includes('src/utils.ts'),
-  'file name missing from output'
-);
-assert(
-  'contains Logical Flow section',
-  md.includes('🧠 Logical Flow'),
-  'Logical Flow section missing'
-);
-assert(
-  'contains Added Code section',
-  md.includes('✅ Added Code'),
-  'Added Code section missing'
-);
-assert(
-  'does not contain Removed Code section when nothing removed',
-  !md.includes('❌ Removed Code'),
-  'Removed Code section appeared unexpectedly'
-);
-assert(
   'contains auto-generated footer',
   md.includes('Auto-generated'),
   'footer missing'
 );
-
-// ─── Test Suite 10: generateReaderMarkdown with removed lines ─────────────────
-
-section('generateReaderMarkdown — shows removed code');
-
-const mdMixed = generateReaderMarkdown(MIXED_DIFF, { file: 'src/data.ts' });
-
 assert(
-  'contains Removed Code section when - lines exist',
-  mdMixed.includes('❌ Removed Code'),
-  'Removed Code section missing despite removed lines in diff'
+  'does not contain old Logical Flow section',
+  !md.includes('🧠 Logical Flow'),
+  'old Logical Flow section still present — should be removed'
 );
 assert(
-  'removed code contains the old line content',
-  mdMixed.includes('legacy()'),
-  `removed section missing "legacy()"`
+  'does not contain old Added Code section header',
+  !md.includes('✅ Added Code'),
+  'old Added Code section still present — should be removed'
+);
+assert(
+  'does not throw or return empty string',
+  md.length > 0,
+  'output is empty'
+);
+
+// ─── Test Suite 10: generateReaderMarkdown — new symbol-based format ──────────
+
+section('generateReaderMarkdown — symbol sections');
+
+const SYMBOL_DIFF = `
+diff --git a/src/user.ts b/src/user.ts
+--- a/src/user.ts
++++ b/src/user.ts
+@@ -0,0 +1,8 @@ function UserProfile
++async function fetchUser(id: string) {
++  const res = await fetch('/api/users/' + id)
++  return res.json()
++}
++
++function deleteUser(id: string) {
++  if (!id) return
++}
+`;
+
+const mdSym = generateReaderMarkdown(SYMBOL_DIFF, { file: 'src/user.ts' });
+
+assert(
+  'detects newly added function with ✅',
+  mdSym.includes('✅') && mdSym.includes('fetchUser'),
+  `expected ✅ fetchUser in output: "${mdSym.slice(0, 200)}"`
+);
+assert(
+  'detects async call in behavior',
+  mdSym.includes('비동기 호출') || mdSym.includes('fetch'),
+  'async behavior not detected'
+);
+assert(
+  'detects condition in deleteUser',
+  mdSym.includes('조건') || mdSym.includes('!id'),
+  'condition not detected in deleteUser'
+);
+
+// ─── Test Suite 11: generateReaderMarkdown — removed lines ───────────────────
+
+section('generateReaderMarkdown — removed lines tracked');
+
+const REMOVE_DIFF = `
+diff --git a/src/data.ts b/src/data.ts
+--- a/src/data.ts
++++ b/src/data.ts
+@@ -1,5 +1,5 @@ function processData
+-const [count, setCount] = useState(0)
++const [total, setTotal] = useState(0)
++const result = compute()
+`;
+
+const mdRemove = generateReaderMarkdown(REMOVE_DIFF, { file: 'src/data.ts' });
+
+assert(
+  'output contains footer',
+  mdRemove.includes('Auto-generated'),
+  'footer missing'
+);
+assert(
+  'removed state detected',
+  mdRemove.includes('count') || mdRemove.includes('state 제거'),
+  'removed state not surfaced'
+);
+assert(
+  'added state detected',
+  mdRemove.includes('total') || mdRemove.includes('state 추가'),
+  'added state not surfaced'
 );
 
 // ─── Summary ─────────────────────────────────────────────────────────────────

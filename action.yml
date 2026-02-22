@@ -18,6 +18,10 @@ inputs:
     description: 'Directory where the generated .md file will be saved inside the repo'
     required: false
     default: 'docs/reader'
+  gemini_api_key:
+    description: 'Gemini API key for AI-powered summaries (optional). Get a free key at https://aistudio.google.com/apikey'
+    required: false
+    default: ''
 
 runs:
   using: 'node20'
