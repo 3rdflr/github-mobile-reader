@@ -1,128 +1,128 @@
 # 📖 github-mobile-reader
 
-> 깃허브 PR diff를 모바일에서 읽기 좋은 Markdown으로 변환합니다.
-> 긴 코드를 읽지 않아도 **함수 단위로 무엇이 바뀌었는지** 한눈에 파악할 수 있습니다.
+> Transform GitHub PR diffs into mobile-friendly Markdown — understand what changed per function without reading long code.
 
 [![npm version](https://img.shields.io/npm/v/github-mobile-reader.svg)](https://www.npmjs.com/package/github-mobile-reader)
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](https://opensource.org/licenses/MIT)
 [![Node.js ≥ 18](https://img.shields.io/badge/node-%3E%3D18-brightgreen)](https://nodejs.org)
 
----
-
-## 왜 만들었나
-
-GitHub 모바일 웹에서 PR을 리뷰하면 코드가 고정폭 블록으로 렌더링됩니다.
-긴 줄은 가로 스크롤이 필요하고, 깊게 중첩된 로직은 한눈에 들어오지 않습니다.
-
-`github-mobile-reader`는 diff를 파싱해 **함수/컴포넌트 단위로 변경 내용을 요약**합니다.
-어떤 함수가 추가/삭제/수정됐는지, 어떤 상태나 UI가 바뀌었는지를 짧게 보여줍니다.
+[한국어 문서 →](README.ko.md)
 
 ---
 
-## 출력 예시
+## The Problem
+
+GitHub's mobile web renders code in a fixed-width monospace block. Long lines require horizontal scrolling, and deeply nested logic is impossible to read on a commute.
+
+## The Solution
+
+`github-mobile-reader` parses a git diff and produces a **per-function summary** — showing what each function/component added, removed, or changed rather than raw line diffs.
+
+---
+
+## Example Output
 
 ```markdown
 ## 📄 `src/components/UserProfileModal.tsx`
 
-> 💡 회원 탈퇴 확인 입력창과 Trash2 아이콘 버튼을 추가하고, deleteConfirmInput 검증 후
-> deleteAccount API를 비동기 호출하는 흐름으로 handleDeleteAccount를 변경함.
+> 💡 Added a delete account confirmation input and Trash2 icon button.
+> handleDeleteAccount now validates deleteConfirmInput before calling deleteAccount asynchronously.
 
-### ❌ `loadProfile` _(Function)_ — 제거됨
+### ❌ `loadProfile` _(Function)_ — removed
 _Context: `router`_
 
-### ✏️ `UserProfileModal` _(Function)_ — 변경됨
-**동작 변화**
-+ `setShowDeleteConfirm()` 호출
-+ `setDeleteConfirmInput()` 호출
-**UI 변화**
+### ✏️ `UserProfileModal` _(Function)_ — changed
+**Behavior**
++ `setShowDeleteConfirm()` called
++ `setDeleteConfirmInput()` called
+**UI**
 + `<button>`
 + `<Trash2>`
 + `<input>`
 
-### ✏️ `handleDeleteAccount` _(Function)_ — 변경됨
-**동작 변화**
-+ 조건: deleteConfirmInput !== '탈퇴'
-+ `setIsDeleting()` 호출
-+ `deleteAccount(` 비동기 호출
+### ✏️ `handleDeleteAccount` _(Function)_ — changed
+**Behavior**
++ condition: deleteConfirmInput !== '탈퇴'
++ `setIsDeleting()` called
++ `deleteAccount(` async call
 ```
 
 ---
 
-## 주요 기능
+## Features
 
-- **함수 단위 요약** — 파일 전체가 아닌 함수/컴포넌트별로 변경 내용을 정리
-- **상태(✅ 추가 / ❌ 제거 / ✏️ 변경)** 표시
-- **Context 인라인** — 단순 변수 할당(`router`, `user` 등)은 독립 섹션 대신 `_Context: ..._`로 요약
-- **동작 변화** — 새로 호출된 함수, 추가된 조건 감지
-- **UI 변화** — 추가/제거된 JSX 컴포넌트 감지
-- **Props 변화** — TypeScript 인터페이스/타입 변경 감지
-- **JSX 시맨틱 패턴** — `🔄 list → <Component>` (map), `⚡ cond && <Component>` (조건부 렌더링)
-- **Gemini AI 요약** (선택) — 복잡한 함수도 1~3줄로 자연어 요약 (`> 💡 ...`)
-- **보안** — 토큰은 환경변수로만 주입; 코드에 하드코딩 불가
+- **Per-function summaries** — each function/component gets its own section with status (added / removed / changed)
+- **Context inline** — simple variable assignments (`router`, `user`, etc.) appear as `_Context: ..._` instead of noisy independent sections
+- **Behavior changes** — detects newly called functions and added conditions
+- **UI changes** — detects added/removed JSX components (generic tags like `div`, `span` are filtered)
+- **Props changes** — detects TypeScript interface/type modifications
+- **JSX semantic patterns** — `🔄 list → <Component>` (map), `⚡ cond && <Component>` (conditional rendering)
+- **Gemini AI summaries** (optional) — 1–3 sentence natural language summary per file (`> 💡 ...`)
+- **Secure by default** — tokens are injected via environment variables only; no flag that leaks to shell history
 
 ---
 
-## 목차
+## Table of Contents
 
-1. [CLI 사용법](#cli-사용법)
+1. [CLI Usage](#cli-usage)
 2. [GitHub Action](#github-action)
-3. [Gemini AI 요약 설정](#gemini-ai-요약-설정-선택)
-4. [출력 형식 상세](#출력-형식-상세)
-5. [npm 라이브러리 사용](#npm-라이브러리-사용)
-6. [지원 언어](#지원-언어)
-7. [프로젝트 구조](#프로젝트-구조)
-8. [기여](#기여)
+3. [Gemini AI Summaries (optional)](#gemini-ai-summaries-optional)
+4. [Output Format](#output-format)
+5. [npm Library Usage](#npm-library-usage)
+6. [Language Support](#language-support)
+7. [Project Structure](#project-structure)
+8. [Contributing](#contributing)
 
 ---
 
-## CLI 사용법
+## CLI Usage
 
-별도 설치 없이 `npx`로 바로 실행합니다.
+Run directly with `npx` — no setup or config file needed.
 
-### 인증
+### Authentication
 
 ```bash
 export GITHUB_TOKEN=ghp_xxxx
 ```
 
-> `--token` 플래그는 지원하지 않습니다. 셸 히스토리와 `ps` 출력에 토큰이 노출되기 때문입니다.
+> **Security note:** The CLI does not accept a `--token` flag. Passing secrets as CLI arguments exposes them in shell history and `ps` output.
 
-### 단일 PR
+### Single PR
 
 ```bash
 npx github-mobile-reader --repo owner/repo --pr 42
 ```
 
-### 최근 PR 전체
+### All recent PRs
 
 ```bash
 npx github-mobile-reader --repo owner/repo --all --limit 20
 ```
 
-### 옵션
+### Options
 
-| 플래그          | 기본값            | 설명                                              |
-| --------------- | ----------------- | ------------------------------------------------- |
-| `--repo`        | *(필수)*          | `owner/repo` 형식의 저장소 이름                   |
-| `--pr`          | —                 | 특정 PR 번호 처리                                 |
-| `--all`         | —                 | 최근 PR 전체 처리 (`--limit`와 함께 사용)         |
-| `--out`         | `./reader-output` | 출력 디렉터리 (상대 경로, `..` 불가)              |
-| `--limit`       | `10`              | `--all` 사용 시 최대 PR 수                        |
-| `--gemini-key`  | —                 | Gemini API 키 (또는 `GEMINI_API_KEY` 환경변수)    |
+| Flag           | Default           | Description                                         |
+| -------------- | ----------------- | --------------------------------------------------- |
+| `--repo`       | *(required)*      | Repository in `owner/repo` format                   |
+| `--pr`         | —                 | Process a single PR by number                       |
+| `--all`        | —                 | Process all recent PRs (use with `--limit`)         |
+| `--out`        | `./reader-output` | Output directory — relative paths only, no `..`     |
+| `--limit`      | `10`              | Max number of PRs to fetch when using `--all`       |
+| `--gemini-key` | —                 | Gemini API key (or set `GEMINI_API_KEY` env var)    |
 
-### 출력
+Token: read from `$GITHUB_TOKEN` (60 req/hr unauthenticated, 5,000 req/hr authenticated).
 
-PR당 파일 하나 생성: `reader-output/pr-<number>.md`
+Each PR produces one file: `reader-output/pr-<number>.md`
 
 ---
 
 ## GitHub Action
 
-PR이 열릴 때마다 자동으로 Reader 문서를 생성하고 PR에 코멘트를 답니다.
+Automatically generates a Reader document and posts a comment on every PR.
 
-### Step 1 — 워크플로우 파일 추가
+### Step 1 — Add the workflow file
 
-`.github/workflows/mobile-reader.yml` 생성:
+Create `.github/workflows/mobile-reader.yml`:
 
 ```yaml
 name: 📖 Mobile Reader
@@ -132,8 +132,8 @@ on:
     types: [opened, synchronize, reopened]
 
 permissions:
-  contents: write       # 생성된 .md 파일 커밋
-  pull-requests: write  # PR 코멘트 작성
+  contents: write       # commit the generated .md file
+  pull-requests: write  # post the PR comment
 
 jobs:
   generate-reader:
@@ -152,7 +152,7 @@ jobs:
           github_token: ${{ secrets.GITHUB_TOKEN }}
           base_branch: ${{ github.base_ref }}
           output_dir: docs/reader
-          gemini_api_key: ${{ secrets.GEMINI_API_KEY }}  # 선택 사항
+          gemini_api_key: ${{ secrets.GEMINI_API_KEY }}  # optional
         env:
           PR_NUMBER: ${{ github.event.pull_request.number }}
 
@@ -164,104 +164,104 @@ jobs:
           if git diff --cached --quiet; then
             echo "No changes to commit"
           else
-            git commit -m "docs(reader): PR #${{ github.event.pull_request.number }} reader 업데이트 [skip ci]"
+            git commit -m "docs(reader): update mobile reader for PR #${{ github.event.pull_request.number }} [skip ci]"
             git push
           fi
 ```
 
-### Step 2 — PR 열기
+### Step 2 — Open a PR
 
-이후 모든 PR에 자동으로:
-- `docs/reader/pr-<number>.md` 생성 및 커밋
-- PR에 요약 코멘트 게시
+Every subsequent PR will automatically receive:
+- A Reader Markdown file at `docs/reader/pr-<number>.md`
+- A summary comment on the PR
 
-### Action 입력값
+### Action Inputs
 
-| 입력값           | 필수 | 기본값        | 설명                                              |
-| ---------------- | ---- | ------------- | ------------------------------------------------- |
-| `github_token`   | ✅   | —             | `${{ secrets.GITHUB_TOKEN }}` 사용                |
-| `base_branch`    | ❌   | `main`        | PR이 병합될 기준 브랜치                           |
-| `output_dir`     | ❌   | `docs/reader` | 생성 파일 저장 경로                               |
-| `gemini_api_key` | ❌   | —             | Gemini AI 요약용 API 키 (없으면 AI 요약 비활성화) |
+| Input            | Required | Default       | Description                                        |
+| ---------------- | -------- | ------------- | -------------------------------------------------- |
+| `github_token`   | ✅       | —             | Use `${{ secrets.GITHUB_TOKEN }}`                  |
+| `base_branch`    | ❌       | `main`        | Base branch the PR is merging into                 |
+| `output_dir`     | ❌       | `docs/reader` | Directory for generated `.md` files                |
+| `gemini_api_key` | ❌       | —             | Gemini API key — omit to disable AI summaries      |
 
 ---
 
-## Gemini AI 요약 설정 (선택)
+## Gemini AI Summaries (optional)
 
-`useCanvasRenderer` 같은 200줄짜리 hook도 1~3줄로 자연어 요약해줍니다.
-API 키가 없으면 AI 요약 없이 기존과 동일하게 동작합니다.
+Even complex hooks like `useCanvasRenderer` (200+ lines) get summarized in 1–3 sentences.
+Without an API key, behavior is identical to before — no errors, no fallback output.
 
-### API 키 발급
+### Get a free API key
 
-[aistudio.google.com/apikey](https://aistudio.google.com/apikey) — 무료로 발급 가능
+[aistudio.google.com/apikey](https://aistudio.google.com/apikey)
 
-### CLI에서 사용
+### CLI
 
 ```bash
-# 환경변수로 전달 (권장)
+# via environment variable (recommended)
 GEMINI_API_KEY=AIzaSy... npx github-mobile-reader --repo owner/repo --pr 42
 
-# 또는 플래그로 전달
+# via flag
 npx github-mobile-reader --repo owner/repo --pr 42 --gemini-key AIzaSy...
 ```
 
-### GitHub Action에서 사용
+### GitHub Action
 
-1. 저장소 **Settings → Secrets and variables → Actions → New repository secret**
-2. 이름: `GEMINI_API_KEY`, 값: 발급받은 키
-3. 워크플로우에 `gemini_api_key: ${{ secrets.GEMINI_API_KEY }}` 추가 (위 예시 참고)
+1. Go to **Settings → Secrets and variables → Actions → New repository secret**
+2. Name: `GEMINI_API_KEY`, Value: your key
+3. Add `gemini_api_key: ${{ secrets.GEMINI_API_KEY }}` to the workflow (see example above)
 
-> **보안**: GitHub Secrets에 저장된 키는 워크플로우 로그에도 마스킹되어 노출되지 않습니다.
+> **Security:** GitHub Secrets are masked in all workflow logs and never exposed in plain text.
 
 ---
 
-## 출력 형식 상세
+## Output Format
 
 ```markdown
-# 📖 PR #1 — feat: 회원 탈퇴 기능 추가
+# 📖 PR #1 — feat: add account deletion
 
 > Repository: owner/repo
 > Commit: `a1b2c3d`
-> 변경된 JS/TS 파일: 3개
+> Changed JS/TS files: 3
 
 ---
 
 ## 📄 `src/components/UserProfileModal.tsx`
 
-> 💡 AI가 생성한 1~3줄 요약 (GEMINI_API_KEY 설정 시)
+> 💡 AI-generated 1–3 sentence summary (when GEMINI_API_KEY is set)
 
-### ✅ `newFunction` _(Function)_ — 새로 추가
+### ✅ `newFunction` _(Function)_ — added
 _Context: `depVar1`, `depVar2`_
-**동작 변화**
-+ `someApi(` 비동기 호출
-**UI 변화**
+**Behavior**
++ `someApi(` async call
+**UI**
 + `<NewComponent>`
 
-### ❌ `oldFunction` _(Function)_ — 제거됨
+### ❌ `oldFunction` _(Function)_ — removed
 
-### ✏️ `changedFunction` _(Function)_ — 변경됨
-**Props 변화**
+### ✏️ `changedFunction` _(Function)_ — changed
+**Props**
 + `newProp: string`
 - `oldProp: number`
-**동작 변화**
-+ 조건: value !== 'confirm'
-**JSX 패턴**
+**Behavior**
++ condition: value !== 'confirm'
+**JSX patterns**
 🔄 `items` → `<ItemCard>`
 ⚡ `isVisible` && `<Modal>`
 ```
 
-### 심볼 분류 기준
+### Symbol classification
 
-| 표시 | 의미 |
+| Label | Meaning |
 | --- | --- |
-| `✅ ... — 새로 추가` | diff에서 새로 등장한 함수/컴포넌트 |
-| `❌ ... — 제거됨` | diff에서 사라진 함수/컴포넌트 |
-| `✏️ ... — 변경됨` | 기존에 존재하고 내용이 수정된 함수/컴포넌트 |
-| `_Context: `var`_` | 단순 변수 할당 등 독립 섹션이 불필요한 심볼 |
+| `✅ ... — added` | Function/component newly introduced in the diff |
+| `❌ ... — removed` | Function/component deleted in the diff |
+| `✏️ ... — changed` | Existing function/component with modified content |
+| `_Context: `var`_` | Simple variable assignment collapsed inline |
 
 ---
 
-## npm 라이브러리 사용
+## npm Library Usage
 
 ```bash
 npm install github-mobile-reader
@@ -282,11 +282,11 @@ const markdown = generateReaderMarkdown(diff, {
 console.log(markdown);
 ```
 
-### 공개 API
+### Public API
 
 ```ts
 import {
-  generateReaderMarkdown,  // diff → 완성된 Markdown 문서
+  generateReaderMarkdown,  // diff → complete Markdown document
   parseDiffHunks,          // diff → DiffHunk[]
   attributeLinesToSymbols, // DiffHunk[] → SymbolDiff[]
   generateSymbolSections,  // SymbolDiff[] → string[]
@@ -295,15 +295,15 @@ import {
 
 #### `generateReaderMarkdown(diffText, meta?)`
 
-| 파라미터 | 타입 | 설명 |
+| Parameter | Type | Description |
 | --- | --- | --- |
-| `diffText` | `string` | `git diff` 원시 출력 |
-| `meta.pr` | `string?` | PR 번호 |
-| `meta.commit` | `string?` | 커밋 SHA |
-| `meta.file` | `string?` | 파일 이름 |
-| `meta.repo` | `string?` | `owner/repo` 형식 |
+| `diffText` | `string` | Raw `git diff` output |
+| `meta.pr` | `string?` | Pull request number |
+| `meta.commit` | `string?` | Commit SHA |
+| `meta.file` | `string?` | File name |
+| `meta.repo` | `string?` | Repository in `owner/repo` format |
 
-**반환값:** `string` — 완성된 Markdown 문서
+**Returns:** `string` — the complete Markdown document.
 
 #### `SymbolDiff`
 
@@ -319,51 +319,51 @@ interface SymbolDiff {
 
 ---
 
-## 지원 언어
+## Language Support
 
-파서는 JS/TS 구문 패턴에 최적화되어 있습니다.
+The parser is optimized for JS/TS syntax patterns.
 
-| 언어 | 확장자 | 지원 수준 |
+| Language | Extensions | Support |
 | --- | --- | --- |
-| JavaScript | `.js` `.mjs` `.cjs` | ✅ 완전 지원 |
-| TypeScript | `.ts` | ✅ 완전 지원 |
-| React JSX | `.jsx` | ✅ 완전 지원 |
-| React TSX | `.tsx` | ✅ 완전 지원 |
-| 기타 언어 | — | 🔜 예정 |
+| JavaScript | `.js` `.mjs` `.cjs` | ✅ Full |
+| TypeScript | `.ts` | ✅ Full |
+| React JSX | `.jsx` | ✅ Full |
+| React TSX | `.tsx` | ✅ Full |
+| Others | — | 🔜 Planned |
 
 ---
 
-## 프로젝트 구조
+## Project Structure
 
 ```
 github-mobile-reader/
 ├── src/
-│   ├── parser.ts    ← diff 파싱 및 심볼 분석 (핵심 로직)
-│   ├── gemini.ts    ← Gemini Flash AI 요약 (opt-in)
-│   ├── index.ts     ← npm 공개 API
-│   ├── action.ts    ← GitHub Action 진입점
-│   └── cli.ts       ← CLI 진입점
-├── dist/            ← 컴파일 결과물 (자동 생성)
-├── reader-output/   ← CLI 출력 디렉터리 (gitignored)
-├── action.yml       ← GitHub Action 정의
+│   ├── parser.ts    ← diff parsing and symbol analysis (core logic)
+│   ├── gemini.ts    ← Gemini Flash AI summaries (opt-in)
+│   ├── index.ts     ← public npm API
+│   ├── action.ts    ← GitHub Action entry point
+│   └── cli.ts       ← CLI entry point
+├── dist/            ← compiled output (auto-generated)
+├── reader-output/   ← CLI output directory (gitignored)
+├── action.yml       ← GitHub Action definition
 └── package.json
 ```
 
 ---
 
-## 기여
+## Contributing
 
 ```bash
 git clone https://github.com/3rdflr/github-mobile-reader.git
 cd github-mobile-reader
 npm install
-npm run build:all   # 라이브러리 + Action + CLI 빌드
+npm run build:all   # build library + Action + CLI
 ```
 
-PR 환영합니다.
+Pull requests are welcome.
 
 ---
 
-## 라이선스
+## License
 
 MIT © [3rdflr](https://github.com/3rdflr)
