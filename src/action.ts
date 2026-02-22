@@ -12,6 +12,7 @@ import * as fs from 'fs';
 import * as path from 'path';
 import { execSync } from 'child_process';
 import { generateReaderMarkdown } from './parser';
+import { summarizeWithGemini } from './gemini';
 
 // ── Helpers ──────────────────────────────────────────────────────────────────
 
@@ -73,12 +74,13 @@ function getFileDiffs(baseBranch: string): FileDiff[] {
 
 // ── Markdown output ───────────────────────────────────────────────────────────
 
-function writeMarkdown(
+async function writeMarkdown(
   outputDir: string,
   prNumber: string,
   fileDiffs: FileDiff[],
-  meta: { repo: string; commit: string }
-): string {
+  meta: { repo: string; commit: string },
+  geminiKey?: string,
+): Promise<string> {
   const parts: string[] = [
     `# 📖 PR #${prNumber} — Mobile Reader View\n`,
     `> Repository: ${meta.repo}  `,
@@ -96,6 +98,13 @@ function writeMarkdown(
     });
 
     parts.push(`## 📄 \`${filename}\`\n`);
+
+    // AI summary (opt-in — only when GEMINI_API_KEY is set)
+    if (geminiKey) {
+      const summary = await summarizeWithGemini(filename, diff, geminiKey);
+      if (summary) parts.push(`> 💡 ${summary}\n`);
+    }
+
     parts.push(section);
     parts.push('\n---\n');
   }
@@ -150,14 +159,16 @@ async function main(): Promise<void> {
   const prNumber   = env('PR_NUMBER');
   const baseBranch = env('BASE_BRANCH', 'main');
   const outputDir  = env('OUTPUT_DIR', 'docs/reader');
+  const geminiKey  = process.env.GEMINI_API_KEY;         // optional
   const commit     = run('git rev-parse --short HEAD');
 
   console.log(`[github-mobile-reader] Processing PR #${prNumber} (${repo})`);
+  if (geminiKey) console.log('[github-mobile-reader] Gemini AI summaries enabled');
 
   const fileDiffs = getFileDiffs(baseBranch);
   console.log(`[github-mobile-reader] Found ${fileDiffs.length} JS/TS file(s) with changes`);
 
-  const outPath = writeMarkdown(outputDir, prNumber, fileDiffs, { repo, commit });
+  const outPath = await writeMarkdown(outputDir, prNumber, fileDiffs, { repo, commit }, geminiKey);
 
   // Build a short summary for the PR comment
   const fileList = fileDiffs.map(f => `- \`${f.filename}\``).join('\n') || '- (none)';
