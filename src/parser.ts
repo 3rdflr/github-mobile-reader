@@ -17,7 +17,7 @@ export enum Priority {
 }
 
 export interface FlowNode {
-  type: 'root' | 'chain' | 'condition' | 'loop' | 'function' | 'call';
+  type: "root" | "chain" | "condition" | "loop" | "function" | "call";
   name: string;
   children: FlowNode[];
   depth: number;
@@ -50,7 +50,9 @@ export function isJSXFile(filename: string): boolean {
 }
 
 export function hasJSXContent(lines: string[]): boolean {
-  return lines.some(l => /<[A-Z][A-Za-z]*[\s/>]/.test(l) || /return\s*\(/.test(l));
+  return lines.some(
+    (l) => /<[A-Z][A-Za-z]*[\s/>]/.test(l) || /return\s*\(/.test(l),
+  );
 }
 
 export function isClassNameOnlyLine(line: string): boolean {
@@ -63,16 +65,18 @@ export function extractClassName(line: string): string | null {
   if (staticMatch) return staticMatch[1];
 
   // Ternary: className={isDark ? "bg-gray-900" : "bg-white"}
-  const ternaryMatch = line.match(/className=\{[^?]+\?\s*"([^"]*)"\s*:\s*"([^"]*)"\}/);
+  const ternaryMatch = line.match(
+    /className=\{[^?]+\?\s*"([^"]*)"\s*:\s*"([^"]*)"\}/,
+  );
   if (ternaryMatch) return `${ternaryMatch[1]} ${ternaryMatch[2]}`;
 
   // Template literal: className={`base ${condition ? "a" : "b"}`}
   const templateMatch = line.match(/className=\{`([^`]*)`\}/);
   if (templateMatch) {
     const raw = templateMatch[1];
-    const literals = raw.replace(/\$\{[^}]*\}/g, ' ').trim();
-    const exprStrings = [...raw.matchAll(/"([^"]*)"/g)].map(m => m[1]);
-    return [literals, ...exprStrings].filter(Boolean).join(' ');
+    const literals = raw.replace(/\$\{[^}]*\}/g, " ").trim();
+    const exprStrings = [...raw.matchAll(/"([^"]*)"/g)].map((m) => m[1]);
+    return [literals, ...exprStrings].filter(Boolean).join(" ");
   }
 
   return null;
@@ -81,36 +85,47 @@ export function extractClassName(line: string): string | null {
 export function extractComponentFromLine(line: string): string {
   const tagMatch = line.match(/<([A-Za-z][A-Za-z0-9.]*)/);
   if (tagMatch) return tagMatch[1];
-  return 'unknown';
+  return "unknown";
 }
 
 export function parseClassNameChanges(
   addedLines: string[],
-  removedLines: string[]
+  removedLines: string[],
 ): ClassNameChange[] {
-  const componentMap = new Map<string, { added: Set<string>; removed: Set<string> }>();
+  const componentMap = new Map<
+    string,
+    { added: Set<string>; removed: Set<string> }
+  >();
 
-  for (const line of addedLines.filter(l => /className=/.test(l))) {
+  for (const line of addedLines.filter((l) => /className=/.test(l))) {
     const cls = extractClassName(line);
     const comp = extractComponentFromLine(line);
     if (!cls) continue;
-    if (!componentMap.has(comp)) componentMap.set(comp, { added: new Set(), removed: new Set() });
-    cls.split(/\s+/).filter(Boolean).forEach(c => componentMap.get(comp)!.added.add(c));
+    if (!componentMap.has(comp))
+      componentMap.set(comp, { added: new Set(), removed: new Set() });
+    cls
+      .split(/\s+/)
+      .filter(Boolean)
+      .forEach((c) => componentMap.get(comp)!.added.add(c));
   }
 
-  for (const line of removedLines.filter(l => /className=/.test(l))) {
+  for (const line of removedLines.filter((l) => /className=/.test(l))) {
     const cls = extractClassName(line);
     const comp = extractComponentFromLine(line);
     if (!cls) continue;
-    if (!componentMap.has(comp)) componentMap.set(comp, { added: new Set(), removed: new Set() });
-    cls.split(/\s+/).filter(Boolean).forEach(c => componentMap.get(comp)!.removed.add(c));
+    if (!componentMap.has(comp))
+      componentMap.set(comp, { added: new Set(), removed: new Set() });
+    cls
+      .split(/\s+/)
+      .filter(Boolean)
+      .forEach((c) => componentMap.get(comp)!.removed.add(c));
   }
 
   const changes: ClassNameChange[] = [];
   for (const [comp, { added, removed }] of componentMap) {
-    if (comp === 'unknown') continue; // skip unresolvable components
-    const pureAdded = [...added].filter(c => !removed.has(c));
-    const pureRemoved = [...removed].filter(c => !added.has(c));
+    if (comp === "unknown") continue; // skip unresolvable components
+    const pureAdded = [...added].filter((c) => !removed.has(c));
+    const pureRemoved = [...removed].filter((c) => !added.has(c));
     if (pureAdded.length === 0 && pureRemoved.length === 0) continue;
     changes.push({ component: comp, added: pureAdded, removed: pureRemoved });
   }
@@ -122,8 +137,9 @@ export function renderStyleChanges(changes: ClassNameChange[]): string[] {
   const lines: string[] = [];
   for (const change of changes) {
     lines.push(`**${change.component}**`);
-    if (change.added.length > 0) lines.push(`  + ${change.added.join('  ')}`);
-    if (change.removed.length > 0) lines.push(`  - ${change.removed.join('  ')}`);
+    if (change.added.length > 0) lines.push(`  + ${change.added.join("  ")}`);
+    if (change.removed.length > 0)
+      lines.push(`  - ${change.removed.join("  ")}`);
   }
   return lines;
 }
@@ -159,7 +175,7 @@ export function extractJSXComponentName(line: string): string {
     eventProps.push(m[1]);
   }
 
-  return eventProps.length > 0 ? `${name}(${eventProps.join(', ')})` : name;
+  return eventProps.length > 0 ? `${name}(${eventProps.join(", ")})` : name;
 }
 
 export function shouldIgnoreJSX(line: string): boolean {
@@ -176,9 +192,12 @@ export function shouldIgnoreJSX(line: string): boolean {
     /^fill=/.test(t) ||
     /^stroke=/.test(t) ||
     /^d="/.test(t) ||
-    t === '{' || t === '}' ||
-    t === '(' || t === ')' ||
-    t === '<>' || t === '</>' ||
+    t === "{" ||
+    t === "}" ||
+    t === "(" ||
+    t === ")" ||
+    t === "<>" ||
+    t === "</>" ||
     /^\{\/\*/.test(t)
   );
 }
@@ -204,7 +223,7 @@ export function parseJSXToFlowTree(lines: string[]): FlowNode[] {
     const selfClosing = isJSXSelfClosing(line);
 
     const node: FlowNode = {
-      type: 'call',
+      type: "call",
       name,
       children: [],
       depth,
@@ -236,15 +255,19 @@ export function filterDiffLines(diffText: string): {
   added: string[];
   removed: string[];
 } {
-  const lines = diffText.split('\n');
+  const lines = diffText.split("\n");
 
   const added = lines
-    .filter(l => l.startsWith('+') && !l.startsWith('+++') && l.trim() !== '+')
-    .map(l => l.substring(1));
+    .filter(
+      (l) => l.startsWith("+") && !l.startsWith("+++") && l.trim() !== "+",
+    )
+    .map((l) => l.substring(1));
 
   const removed = lines
-    .filter(l => l.startsWith('-') && !l.startsWith('---') && l.trim() !== '-')
-    .map(l => l.substring(1));
+    .filter(
+      (l) => l.startsWith("-") && !l.startsWith("---") && l.trim() !== "-",
+    )
+    .map((l) => l.substring(1));
 
   return { added, removed };
 }
@@ -254,15 +277,15 @@ export function filterDiffLines(diffText: string): {
  */
 export function normalizeCode(lines: string[]): string[] {
   return lines
-    .map(line => {
+    .map((line) => {
       let normalized = line;
-      normalized = normalized.replace(/\/\/.*$/, '');
-      normalized = normalized.replace(/\/\*.*?\*\//, '');
+      normalized = normalized.replace(/\/\/.*$/, "");
+      normalized = normalized.replace(/\/\*.*?\*\//, "");
       normalized = normalized.trim();
-      normalized = normalized.replace(/;$/, '');
+      normalized = normalized.replace(/;$/, "");
       return normalized;
     })
-    .filter(line => line.length > 0);
+    .filter((line) => line.length > 0);
 }
 
 /**
@@ -279,7 +302,7 @@ export function getIndentDepth(line: string): number {
  */
 export function isChaining(line: string, prevLine: string | null): boolean {
   if (!prevLine) return false;
-  if (!line.trim().startsWith('.')) return false;
+  if (!line.trim().startsWith(".")) return false;
   if (!prevLine.match(/[)\}]$/)) return false;
   return true;
 }
@@ -353,7 +376,7 @@ export function shouldIgnore(line: string): boolean {
     /^return$/,
     /^throw\s+/,
   ];
-  return ignorePatterns.some(p => p.test(line.trim()));
+  return ignorePatterns.some((p) => p.test(line.trim()));
 }
 
 /**
@@ -403,7 +426,7 @@ export function parseToFlowTree(lines: string[]): FlowNode[] {
 
       if (currentChain) {
         const chainNode: FlowNode = {
-          type: 'chain',
+          type: "chain",
           name: simplified,
           children: [],
           depth: relativeDepth,
@@ -431,8 +454,8 @@ export function parseToFlowTree(lines: string[]): FlowNode[] {
     if (isFunctionDeclaration(line)) {
       const funcMatch = line.match(/(?:function|const|let|var)\s+(\w+)/);
       roots.push({
-        type: 'function',
-        name: funcMatch ? `${funcMatch[1]}()` : 'function()',
+        type: "function",
+        name: funcMatch ? `${funcMatch[1]}()` : "function()",
         children: [],
         depth: relativeDepth,
         priority: Priority.FUNCTION,
@@ -446,7 +469,7 @@ export function parseToFlowTree(lines: string[]): FlowNode[] {
     const root = extractRoot(line);
     if (root) {
       currentChain = {
-        type: 'root',
+        type: "root",
         name: root,
         children: [],
         depth: relativeDepth,
@@ -455,9 +478,11 @@ export function parseToFlowTree(lines: string[]): FlowNode[] {
       roots.push(currentChain);
     } else if (isConditional(line)) {
       const condMatch = line.match(/(if|else|switch)\s*\(([^)]+)\)/);
-      const condName = condMatch ? `${condMatch[1]} (${condMatch[2]})` : line.trim();
+      const condName = condMatch
+        ? `${condMatch[1]} (${condMatch[2]})`
+        : line.trim();
       roots.push({
-        type: 'condition',
+        type: "condition",
         name: condName,
         children: [],
         depth: relativeDepth,
@@ -466,8 +491,8 @@ export function parseToFlowTree(lines: string[]): FlowNode[] {
       currentChain = null;
     } else if (isLoop(line)) {
       roots.push({
-        type: 'loop',
-        name: 'loop',
+        type: "loop",
+        name: "loop",
         children: [],
         depth: relativeDepth,
         priority: Priority.LOOP,
@@ -486,7 +511,7 @@ export function parseToFlowTree(lines: string[]): FlowNode[] {
  */
 export function renderFlowTree(nodes: FlowNode[], indent = 0): string[] {
   const lines: string[] = [];
-  const prefix = indent === 0 ? '' : ' '.repeat((indent - 1) * 4) + ' └─ ';
+  const prefix = indent === 0 ? "" : " ".repeat((indent - 1) * 4) + " └─ ";
 
   for (const node of nodes) {
     lines.push(prefix + node.name);
@@ -508,8 +533,8 @@ export function parseDiffToLogicalFlow(diffText: string): ParseResult {
 
   return {
     root: flowTree,
-    rawCode: added.join('\n'),
-    removedCode: removed.join('\n'),
+    rawCode: added.join("\n"),
+    removedCode: removed.join("\n"),
   };
 }
 
@@ -521,20 +546,26 @@ export function parseDiffToLogicalFlow(diffText: string): ParseResult {
  */
 export function extractChangedSymbols(
   addedLines: string[],
-  removedLines: string[]
-): { name: string; status: 'added' | 'removed' | 'modified' }[] {
+  removedLines: string[],
+): { name: string; status: "added" | "removed" | "modified" }[] {
   // Match function declarations and arrow function assignments
   // Must be at the start of a line (after optional export/async keywords)
-  const FUNC_RE = /^(?:export\s+)?(?:async\s+)?function\s+([a-z]\w+)|^(?:export\s+)?(?:const|let|var)\s+([a-z]\w+)\s*=\s*(?:async\s*)?\(/;
+  // Matches:
+  //   function foo() / async function foo()
+  //   const foo = async () =>  /  const foo = (
+  //   const useStore = create<T>(  /  const useStore = create(
+  const FUNC_RE =
+    /^(?:export\s+)?(?:async\s+)?function\s+([a-z]\w+)|^(?:export\s+)?(?:const|let|var)\s+([a-z]\w+)\s*=\s*(?:async\s+)?\(?|^(?:export\s+)?(?:const|let|var)\s+([a-z]\w+)\s*=\s*[a-z]\w+\s*[<(]/;
   // Component: PascalCase starting with uppercase, but exclude ALL_CAPS constants
-  const COMPONENT_RE = /^(?:export\s+)?(?:default\s+)?(?:function|const)\s+([A-Z][a-z][A-Za-z0-9]*)/;
+  const COMPONENT_RE =
+    /^(?:export\s+)?(?:default\s+)?(?:function|const)\s+([A-Z][a-z][A-Za-z0-9]*)/;
 
   const extract = (lines: string[]): Set<string> => {
     const names = new Set<string>();
     for (const line of lines) {
       const cm = line.match(COMPONENT_RE) || line.match(FUNC_RE);
       if (cm) {
-        const name = cm[1] || cm[2];
+        const name = cm[1] || cm[2] || cm[3];
         if (name) names.add(name);
       }
     }
@@ -544,16 +575,20 @@ export function extractChangedSymbols(
   const addedNames = extract(addedLines);
   const removedNames = extract(removedLines);
 
-  const results: { name: string; status: 'added' | 'removed' | 'modified' }[] = [];
+  const results: { name: string; status: "added" | "removed" | "modified" }[] =
+    [];
   const seen = new Set<string>();
 
   for (const name of addedNames) {
     seen.add(name);
-    results.push({ name, status: removedNames.has(name) ? 'modified' : 'added' });
+    results.push({
+      name,
+      status: removedNames.has(name) ? "modified" : "added",
+    });
   }
   for (const name of removedNames) {
     if (!seen.has(name)) {
-      results.push({ name, status: 'removed' });
+      results.push({ name, status: "removed" });
     }
   }
 
@@ -569,9 +604,9 @@ export function renderJSXTreeCompact(nodes: FlowNode[], maxDepth = 3): string {
 
   function walk(node: FlowNode, depth: number) {
     if (depth > maxDepth) return;
-    const indent = '  '.repeat(depth);
+    const indent = "  ".repeat(depth);
     const hasChildren = node.children.length > 0;
-    lines.push(`${indent}${node.name}${hasChildren ? '' : ''}`);
+    lines.push(`${indent}${node.name}${hasChildren ? "" : ""}`);
     for (const child of node.children) {
       walk(child, depth + 1);
     }
@@ -581,7 +616,7 @@ export function renderJSXTreeCompact(nodes: FlowNode[], maxDepth = 3): string {
     walk(root, 0);
   }
 
-  return lines.join('\n');
+  return lines.join("\n");
 }
 
 /**
@@ -589,13 +624,13 @@ export function renderJSXTreeCompact(nodes: FlowNode[], maxDepth = 3): string {
  */
 export function generateReaderMarkdown(
   diffText: string,
-  meta: ReaderMarkdownMeta = {}
+  meta: ReaderMarkdownMeta = {},
 ): string {
   const { added, removed } = filterDiffLines(diffText);
 
   // ── Detect JSX mode ──────────────────────────────────────
   const isJSX = Boolean(
-    (meta.file && isJSXFile(meta.file)) || hasJSXContent(added)
+    (meta.file && isJSXFile(meta.file)) || hasJSXContent(added),
   );
 
   // ── Extract changed symbols ───────────────────────────────
@@ -608,42 +643,44 @@ export function generateReaderMarkdown(
   const sections: string[] = [];
 
   // ── Header ──────────────────────────────────────────────
-  sections.push('# 📖 GitHub Reader View\n');
-  sections.push('> Generated by **github-mobile-reader**');
-  if (meta.repo)   sections.push(`> Repository: ${meta.repo}`);
-  if (meta.pr)     sections.push(`> Pull Request: #${meta.pr}`);
+  sections.push("# 📖 GitHub Reader View\n");
+  sections.push("> Generated by **github-mobile-reader**");
+  if (meta.repo) sections.push(`> Repository: ${meta.repo}`);
+  if (meta.pr) sections.push(`> Pull Request: #${meta.pr}`);
   if (meta.commit) sections.push(`> Commit: \`${meta.commit}\``);
-  if (meta.file)   sections.push(`> File: \`${meta.file}\``);
-  sections.push('\n');
+  if (meta.file) sections.push(`> File: \`${meta.file}\``);
+  sections.push("\n");
 
   // ── Changed Functions / Components ───────────────────────
   if (changedSymbols.length > 0) {
-    sections.push('### 변경된 함수 / 컴포넌트\n');
-    const STATUS_ICON = { added: '✅', removed: '❌', modified: '✏️' };
+    sections.push("### 변경된 함수 / 컴포넌트\n");
+    const STATUS_ICON = { added: "✅", removed: "❌", modified: "✏️" };
     for (const { name, status } of changedSymbols) {
       sections.push(`- ${STATUS_ICON[status]} \`${name}()\` — ${status}`);
     }
-    sections.push('');
+    sections.push("");
   }
 
   // ── JSX Structure (JSX only) ─────────────────────────────
   if (isJSX && jsxTree.length > 0) {
-    sections.push('### 🎨 JSX Structure\n');
-    sections.push('```');
+    sections.push("### 🎨 JSX Structure\n");
+    sections.push("```");
     sections.push(renderJSXTreeCompact(jsxTree));
-    sections.push('```\n');
+    sections.push("```\n");
   }
 
   // ── Style Changes (JSX only) ─────────────────────────────
   if (isJSX && classNameChanges.length > 0) {
-    sections.push('### 💅 Style Changes\n');
+    sections.push("### 💅 Style Changes\n");
     sections.push(...renderStyleChanges(classNameChanges));
-    sections.push('');
+    sections.push("");
   }
 
   // ── Footer ───────────────────────────────────────────────
-  sections.push('---');
-  sections.push('🛠 Auto-generated by [github-mobile-reader](https://github.com/3rdflr/github-mobile-reader). Do not edit manually.');
+  sections.push("---");
+  sections.push(
+    "🛠 Auto-generated by [github-mobile-reader](https://github.com/3rdflr/github-mobile-reader). Do not edit manually.",
+  );
 
-  return sections.join('\n');
+  return sections.join("\n");
 }
