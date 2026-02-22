@@ -146,27 +146,38 @@ jobs:
         with:
           fetch-depth: 0
 
-      - name: Generate Reader Markdown
-        uses: 3rdflr/github-mobile-reader@v1
+      - name: Setup Node
+        uses: actions/setup-node@v4
         with:
           github_token: ${{ secrets.GITHUB_TOKEN }}
           base_branch: ${{ github.base_ref }}
           output_dir: docs/reader
           gemini_api_key: ${{ secrets.GEMINI_API_KEY }}  # optional
         env:
-          PR_NUMBER: ${{ github.event.pull_request.number }}
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
-      - name: Commit Reader Markdown
-        run: |
-          git config user.name  "github-actions[bot]"
-          git config user.email "github-actions[bot]@users.noreply.github.com"
-          git add docs/reader/
-          if git diff --cached --quiet; then
-            echo "No changes to commit"
-          else
-            git commit -m "docs(reader): update mobile reader for PR #${{ github.event.pull_request.number }} [skip ci]"
-            git push
-          fi
+      - name: Post PR Comment
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const fs = require('fs');
+            const path = './reader-output/pr-${{ github.event.pull_request.number }}.md';
+            if (!fs.existsSync(path)) { console.log('No reader file generated.'); return; }
+            const body = fs.readFileSync(path, 'utf8');
+            const comments = await github.rest.issues.listComments({
+              owner: context.repo.owner, repo: context.repo.repo,
+              issue_number: ${{ github.event.pull_request.number }},
+            });
+            const prev = comments.data.find(c =>
+              c.user.login === 'github-actions[bot]' && c.body.startsWith('# 📖 PR #')
+            );
+            if (prev) await github.rest.issues.deleteComment({
+              owner: context.repo.owner, repo: context.repo.repo, comment_id: prev.id,
+            });
+            await github.rest.issues.createComment({
+              owner: context.repo.owner, repo: context.repo.repo,
+              issue_number: ${{ github.event.pull_request.number }}, body,
+            });
 ```
 
 ### Step 2 — Open a PR
@@ -259,7 +270,7 @@ _Context: `depVar1`, `depVar2`_
 | `✏️ ... — changed` | Existing function/component with modified content |
 | `_Context: `var`_` | Simple variable assignment collapsed inline |
 
----
+### 💅 Style Changes
 
 ## npm Library Usage
 
