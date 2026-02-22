@@ -843,49 +843,94 @@ function buildBehaviorSummary(lines: string[], mode: "added" | "removed" = "adde
   const normalized = normalizeCode(lines);
 
   for (const line of normalized) {
-    // React state: const [x, setX] = useState(...)
-    const stateMatch = line.match(/const\s+\[(\w+),\s*set\w+\]\s*=\s*useState/);
+    // React state: const [x, setX] = useState(initialValue)
+    const stateMatch = line.match(/const\s+\[(\w+),\s*set\w+\]\s*=\s*useState\s*\(([^)]*)\)/);
     if (stateMatch) {
-      const label = mode === "removed" ? `\`${stateMatch[1]}\` state 제거` : `\`${stateMatch[1]}\` state 추가`;
+      const init = stateMatch[2].trim();
+      const initLabel = init.length > 0 && init !== "" ? ` = ${init}` : "";
+      const label = mode === "removed"
+        ? `state \`${stateMatch[1]}\` 제거`
+        : `state \`${stateMatch[1]}\`${initLabel} 추가`;
       summary.push(label);
       continue;
     }
 
-    // Hook calls: useEffect, useCallback, useMemo, etc. (assigned to variable)
-    const hookAssignMatch = line.match(/const\s+\w+\s*=\s*(use[A-Z]\w+)\s*\(/);
-    if (hookAssignMatch) { summary.push(`\`${hookAssignMatch[1]}\` 호출`); continue; }
+    // useEffect with deps array
+    const effectMatch = line.match(/useEffect\s*\(\s*(?:async\s*)?\(\s*\)\s*=>\s*\{?|useEffect\s*\(\s*\(\s*\)\s*=>/);
+    if (effectMatch) {
+      // Try to find deps on same line: useEffect(() => { ... }, [dep1, dep2])
+      const depsMatch = line.match(/useEffect[^,]*,\s*\[([^\]]*)\]/);
+      if (depsMatch) {
+        const deps = depsMatch[1].trim();
+        summary.push(deps.length === 0 ? `\`useEffect\` — 마운트 시 1회 실행` : `\`useEffect\` — [${deps}] 변경 시 실행`);
+      } else {
+        summary.push(`\`useEffect\` 등록`);
+      }
+      continue;
+    }
 
-    // Hook calls (bare, not assigned)
+    // Hook calls assigned to variable: const x = useSomeHook(arg)
+    const hookAssignMatch = line.match(/const\s+(\w+)\s*=\s*(use[A-Z]\w+)\s*\(([^)]*)\)/);
+    if (hookAssignMatch) {
+      const arg = hookAssignMatch[3].trim();
+      const argLabel = arg.length > 0 && arg.length <= 30 ? `(${arg})` : "";
+      summary.push(`\`${hookAssignMatch[1]}\` ← \`${hookAssignMatch[2]}${argLabel}\``);
+      continue;
+    }
+
+    // Hook calls (bare, not assigned): useCallback(...), useMemo(...)
     const hookMatch = line.match(/^\s*(use[A-Z]\w+)\s*\(/);
     if (hookMatch) { summary.push(`\`${hookMatch[1]}\` 호출`); continue; }
 
-    // Async/await calls
-    const awaitMatch = line.match(/await\s+([\w.]+)\s*\(/);
-    if (awaitMatch) { summary.push(`\`${awaitMatch[1]}()\` 비동기 호출`); continue; }
+    // Async/await calls: const x = await foo.bar(arg)
+    const awaitAssignMatch = line.match(/(?:const|let|var)\s+(\w+)\s*=\s*await\s+([\w.]+)\s*\(([^)]{0,40})\)/);
+    if (awaitAssignMatch) {
+      const arg = awaitAssignMatch[3].trim();
+      const argLabel = arg.length > 0 && arg.length <= 25 ? `(${arg})` : "()";
+      summary.push(`\`${awaitAssignMatch[1]}\` ← await \`${awaitAssignMatch[2]}${argLabel}\``);
+      continue;
+    }
+
+    // Bare await call: await foo(arg)
+    const awaitMatch = line.match(/^await\s+([\w.]+)\s*\(([^)]{0,40})\)/);
+    if (awaitMatch) {
+      const arg = awaitMatch[2].trim();
+      const argLabel = arg.length > 0 && arg.length <= 25 ? `(${arg})` : "()";
+      summary.push(`await \`${awaitMatch[1]}${argLabel}\``);
+      continue;
+    }
 
     // Conditionals
-    const condMatch = line.match(/^(if|else if)\s*\((.{1,50})\)/);
-    if (condMatch) { summary.push(`조건: ${condMatch[2].trim()}`); continue; }
+    const condMatch = line.match(/^(if|else if)\s*\((.{1,60})\)/);
+    if (condMatch) { summary.push(`조건: \`${condMatch[2].trim()}\``); continue; }
 
     // Error handling
     const catchMatch = line.match(/^catch\s*\(\s*(\w+)\s*\)/);
     if (catchMatch) { summary.push(`에러 처리 (catch \`${catchMatch[1]}\`)`); continue; }
 
-    // Return value (non-trivial)
-    const returnMatch = line.match(/^return\s+(.{3,50})/);
+    // Return value (non-trivial, non-JSX)
+    const returnMatch = line.match(/^return\s+(.{3,60})/);
     if (returnMatch && !returnMatch[1].startsWith("<") && !returnMatch[1].startsWith("{")) {
-      summary.push(`반환: \`${returnMatch[1].trim().replace(/[;,]$/, "")}\``);
+      const val = returnMatch[1].trim().replace(/[;,]$/, "");
+      if (val.length <= 50) summary.push(`반환: \`${val}\``);
       continue;
     }
 
-    // setState calls: setFoo(...)
-    const setStateMatch = line.match(/^(set[A-Z]\w+)\s*\(/);
-    if (setStateMatch) { summary.push(`\`${setStateMatch[1]}()\` 호출`); continue; }
+    // setState calls with argument: setFoo(value)
+    const setStateMatch = line.match(/^(set[A-Z]\w+)\s*\(([^)]{0,40})\)/);
+    if (setStateMatch) {
+      const arg = setStateMatch[2].trim();
+      const argLabel = arg.length > 0 && arg.length <= 30 ? `(${arg})` : "()";
+      summary.push(`\`${setStateMatch[1]}${argLabel}\` 호출`);
+      continue;
+    }
 
-    // Generic function calls at root level
-    const callMatch = line.match(/^(\w+)\s*\(/);
+    // Generic function calls at root level (not keywords)
+    const callMatch = line.match(/^(\w+)\s*\(([^)]{0,40})\)/);
     if (callMatch && !["if", "else", "for", "while", "switch", "catch", "function"].includes(callMatch[1])) {
-      summary.push(`\`${callMatch[1]}()\` 호출`);
+      const arg = callMatch[2].trim();
+      const argLabel = arg.length > 0 && arg.length <= 25 ? `(${arg})` : "()";
+      summary.push(`\`${callMatch[1]}${argLabel}\` 호출`);
     }
   }
 
@@ -1053,66 +1098,48 @@ export function generateSymbolSections(
 
   for (const { sym, setupNames } of entries) {
     const kindLabel = sym.kind === "component" ? "Component" : "Function";
+    // Flat bold line instead of ### heading — keeps font size normal on mobile
     sections.push(
-      `### ${STATUS_ICON[sym.status]} \`${sym.name}\` _(${kindLabel})_ — ${STATUS_LABEL[sym.status]}`,
+      `**${STATUS_ICON[sym.status]} \`${sym.name}\`** _(${kindLabel})_ — ${STATUS_LABEL[sym.status]}`,
     );
 
-    // "변수 추가" — setup variables / hooks attached to this symbol
+    const lines: string[] = [];
+
+    // Setup variables attached to this symbol
     if (setupNames.length > 0) {
-      sections.push(`변수 추가: ${setupNames.map((n) => `\`${n}\``).join(", ")}`);
+      lines.push(`변수: ${setupNames.map((n) => `\`${n}\``).join(", ")}`);
     }
 
     // Function parameter changes
     const paramChanges = extractParamChanges(sym.addedLines, sym.removedLines);
-    if (paramChanges.added.length > 0 || paramChanges.removed.length > 0) {
-      sections.push("**파라미터 변화**");
-      paramChanges.added.forEach((p) => sections.push(`+ \`${p}\``));
-      paramChanges.removed.forEach((p) => sections.push(`- \`${p}\` (제거됨)`));
-    }
+    paramChanges.added.forEach((p) => lines.push(`파라미터+ \`${p}\``));
+    paramChanges.removed.forEach((p) => lines.push(`파라미터- \`${p}\``));
 
-    // Props / interface changes — show key only if value is a long string literal
+    // Props / interface changes
     const props = extractPropsChanges(sym.addedLines, sym.removedLines);
-    if (props.added.length > 0 || props.removed.length > 0) {
-      sections.push("**Props 변화**");
-      const abbreviateProp = (p: string) => {
-        // "key: 'long string value'" → "key: '...'"
-        return p.replace(/^(\w[\w?]*:\s*)(['"`])(.{20,})(\2)$/, "$1$2...$2");
-      };
-      props.added.forEach((p) => sections.push(`+ \`${abbreviateProp(p)}\``));
-      props.removed.forEach((p) => sections.push(`- \`${abbreviateProp(p)}\` (제거됨)`));
-    }
+    const abbreviateProp = (p: string) =>
+      p.replace(/^(\w[\w?]*:\s*)(['"`])(.{20,})(\2)$/, "$1$2...$2");
+    props.added.forEach((p) => lines.push(`Props+ \`${abbreviateProp(p)}\``));
+    props.removed.forEach((p) => lines.push(`Props- \`${abbreviateProp(p)}\``));
 
-    // Behavioral summary for added logic
+    // Behavioral summary
     if (sym.status !== "removed") {
-      const addedSummary = buildBehaviorSummary(sym.addedLines);
-      if (addedSummary.length > 0) {
-        sections.push("**동작 변화**");
-        addedSummary.forEach((l) => sections.push(`+ ${l}`));
-      }
+      buildBehaviorSummary(sym.addedLines).forEach((l) => lines.push(`+ ${l}`));
     }
-    // What was removed
     if (sym.status !== "added" && sym.removedLines.length > 0) {
-      const removedSummary = buildBehaviorSummary(sym.removedLines, "removed");
-      if (removedSummary.length > 0) {
-        // Only add header if not already under 동작 변화
-        if (sym.status === "removed") sections.push("**동작 변화**");
-        removedSummary.slice(0, 4).forEach((l) => sections.push(`- ${l}`));
-      }
+      buildBehaviorSummary(sym.removedLines, "removed").slice(0, 4)
+        .forEach((l) => lines.push(`- ${l}`));
     }
 
-    // JSX element diff (map 🔄, conditional ⚡, new/removed tags)
+    // JSX element diff
     if (isJSX) {
       const addedTree = parseJSXToFlowTree(sym.addedLines);
       const removedTree = parseJSXToFlowTree(sym.removedLines);
-      const jsxDiff = buildJSXDiffSummary(
-        addedTree, removedTree, sym.addedLines, sym.removedLines,
-      );
-      if (jsxDiff.length > 0) {
-        sections.push("**UI 변화**");
-        jsxDiff.forEach((l) => sections.push(l));
-      }
+      buildJSXDiffSummary(addedTree, removedTree, sym.addedLines, sym.removedLines)
+        .forEach((l) => lines.push(`UI: ${l.replace(/^[+-]\s*/, "")}`));
     }
 
+    lines.forEach((l) => sections.push(`  ${l}`));
     sections.push("");
   }
 
@@ -1206,9 +1233,6 @@ export function generateReaderMarkdown(
   const hunks = parseDiffHunks(diffText);
   const symbolDiffs = attributeLinesToSymbols(hunks);
 
-  // ── Style changes (className diffs) ───────────────────────
-  const classNameChanges = isJSX ? parseClassNameChanges(added, removed) : [];
-
   const sections: string[] = [];
 
   // ── File-level import changes ─────────────────────────────
@@ -1226,25 +1250,12 @@ export function generateReaderMarkdown(
   } else {
     // Fallback: no symbols detected — show brief raw summary
     if (added.length > 0) {
-      sections.push("### ✅ 추가된 코드\n");
       sections.push("```");
       added.slice(0, 10).forEach((l) => sections.push(l));
       if (added.length > 10) sections.push(`... (+${added.length - 10} lines)`);
-      sections.push("```\n");
-    }
-    if (removed.length > 0) {
-      sections.push("### ❌ 제거된 코드\n");
       sections.push("```");
-      removed.slice(0, 5).forEach((l) => sections.push(l));
-      sections.push("```\n");
+      sections.push("");
     }
-  }
-
-  // ── Style Changes (JSX only) ─────────────────────────────
-  if (isJSX && classNameChanges.length > 0) {
-    sections.push("### 💅 스타일 변화\n");
-    sections.push(...renderStyleChanges(classNameChanges));
-    sections.push("");
   }
 
   // ── Footer ───────────────────────────────────────────────
