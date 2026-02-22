@@ -21,6 +21,9 @@
   },
   "license": "MIT",
   "author": "3rdflrhtl@gmail.com",
+  "bin": {
+    "github-mobile-reader": "./dist/cli.js"
+  },
   "main": "./dist/index.js",
   "module": "./dist/index.mjs",
   "types": "./dist/index.d.ts",
@@ -39,7 +42,8 @@
   "scripts": {
     "build": "tsup src/index.ts --format cjs,esm --dts --clean",
     "build:action": "tsup src/action.ts --format cjs --outDir dist --no-splitting",
-    "build:all": "npm run build && npm run build:action",
+    "build:cli": "tsup src/cli.ts --format cjs --outDir dist --no-splitting",
+    "build:all": "npm run build && npm run build:action && npm run build:cli",
     "dev": "tsup src/index.ts --format cjs,esm --dts --watch",
     "prepublishOnly": "npm run build:all"
   },
