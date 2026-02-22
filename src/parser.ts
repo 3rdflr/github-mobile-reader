@@ -108,6 +108,7 @@ export function parseClassNameChanges(
 
   const changes: ClassNameChange[] = [];
   for (const [comp, { added, removed }] of componentMap) {
+    if (comp === 'unknown') continue; // skip unresolvable components
     const pureAdded = [...added].filter(c => !removed.has(c));
     const pureRemoved = [...removed].filter(c => !added.has(c));
     if (pureAdded.length === 0 && pureRemoved.length === 0) continue;
@@ -512,6 +513,77 @@ export function parseDiffToLogicalFlow(diffText: string): ParseResult {
   };
 }
 
+// ── Changed symbol extraction ─────────────────────────────────────────────────
+
+/**
+ * Extract function/component names from lines with change status.
+ * Returns list of { name, status } where status is 'added' | 'removed' | 'modified'.
+ */
+export function extractChangedSymbols(
+  addedLines: string[],
+  removedLines: string[]
+): { name: string; status: 'added' | 'removed' | 'modified' }[] {
+  // Match function declarations and arrow function assignments
+  // Must be at the start of a line (after optional export/async keywords)
+  const FUNC_RE = /^(?:export\s+)?(?:async\s+)?function\s+([a-z]\w+)|^(?:export\s+)?(?:const|let|var)\s+([a-z]\w+)\s*=\s*(?:async\s*)?\(/;
+  // Component: PascalCase starting with uppercase, but exclude ALL_CAPS constants
+  const COMPONENT_RE = /^(?:export\s+)?(?:default\s+)?(?:function|const)\s+([A-Z][a-z][A-Za-z0-9]*)/;
+
+  const extract = (lines: string[]): Set<string> => {
+    const names = new Set<string>();
+    for (const line of lines) {
+      const cm = line.match(COMPONENT_RE) || line.match(FUNC_RE);
+      if (cm) {
+        const name = cm[1] || cm[2];
+        if (name) names.add(name);
+      }
+    }
+    return names;
+  };
+
+  const addedNames = extract(addedLines);
+  const removedNames = extract(removedLines);
+
+  const results: { name: string; status: 'added' | 'removed' | 'modified' }[] = [];
+  const seen = new Set<string>();
+
+  for (const name of addedNames) {
+    seen.add(name);
+    results.push({ name, status: removedNames.has(name) ? 'modified' : 'added' });
+  }
+  for (const name of removedNames) {
+    if (!seen.has(name)) {
+      results.push({ name, status: 'removed' });
+    }
+  }
+
+  return results;
+}
+
+/**
+ * Render JSX tree as a single compact line: div > header > button(onClick)
+ * Falls back to multi-line for deep trees.
+ */
+export function renderJSXTreeCompact(nodes: FlowNode[], maxDepth = 3): string {
+  const lines: string[] = [];
+
+  function walk(node: FlowNode, depth: number) {
+    if (depth > maxDepth) return;
+    const indent = '  '.repeat(depth);
+    const hasChildren = node.children.length > 0;
+    lines.push(`${indent}${node.name}${hasChildren ? '' : ''}`);
+    for (const child of node.children) {
+      walk(child, depth + 1);
+    }
+  }
+
+  for (const root of nodes) {
+    walk(root, 0);
+  }
+
+  return lines.join('\n');
+}
+
 /**
  * Generate the complete Reader Markdown document
  */
@@ -526,22 +598,14 @@ export function generateReaderMarkdown(
     (meta.file && isJSXFile(meta.file)) || hasJSXContent(added)
   );
 
-  // ── Parse logical flow (strip className lines in JSX mode) ──
-  const addedForFlow = isJSX ? added.filter(l => !isClassNameOnlyLine(l)) : added;
-  const normalizedAdded = normalizeCode(addedForFlow);
-  const flowTree = parseToFlowTree(normalizedAdded);
-
-  // ── Raw code (className stripped in JSX mode) ────────────
-  const rawCode = addedForFlow.join('\n');
-  const removedForCode = isJSX ? removed.filter(l => !isClassNameOnlyLine(l)) : removed;
-  const removedCode = removedForCode.join('\n');
+  // ── Extract changed symbols ───────────────────────────────
+  const changedSymbols = extractChangedSymbols(added, removed);
 
   // ── JSX-specific analysis ────────────────────────────────
   const classNameChanges = isJSX ? parseClassNameChanges(added, removed) : [];
   const jsxTree = isJSX ? parseJSXToFlowTree(added) : [];
 
   const sections: string[] = [];
-  const lang = isJSX ? 'tsx' : 'typescript';
 
   // ── Header ──────────────────────────────────────────────
   sections.push('# 📖 GitHub Reader View\n');
@@ -552,48 +616,34 @@ export function generateReaderMarkdown(
   if (meta.file)   sections.push(`> File: \`${meta.file}\``);
   sections.push('\n');
 
-  // ── Logical Flow ─────────────────────────────────────────
-  if (flowTree.length > 0) {
-    sections.push('## 🧠 Logical Flow\n');
-    sections.push('```');
-    sections.push(...renderFlowTree(flowTree));
-    sections.push('```\n');
+  // ── Changed Functions / Components ───────────────────────
+  if (changedSymbols.length > 0) {
+    sections.push('### 변경된 함수 / 컴포넌트\n');
+    const STATUS_ICON = { added: '✅', removed: '❌', modified: '✏️' };
+    for (const { name, status } of changedSymbols) {
+      sections.push(`- ${STATUS_ICON[status]} \`${name}()\` — ${status}`);
+    }
+    sections.push('');
   }
 
   // ── JSX Structure (JSX only) ─────────────────────────────
   if (isJSX && jsxTree.length > 0) {
-    sections.push('## 🎨 JSX Structure\n');
+    sections.push('### 🎨 JSX Structure\n');
     sections.push('```');
-    sections.push(...renderFlowTree(jsxTree));
+    sections.push(renderJSXTreeCompact(jsxTree));
     sections.push('```\n');
   }
 
   // ── Style Changes (JSX only) ─────────────────────────────
   if (isJSX && classNameChanges.length > 0) {
-    sections.push('## 💅 Style Changes\n');
+    sections.push('### 💅 Style Changes\n');
     sections.push(...renderStyleChanges(classNameChanges));
     sections.push('');
   }
 
-  // ── Added Code ───────────────────────────────────────────
-  if (rawCode.trim()) {
-    sections.push('## ✅ Added Code\n');
-    sections.push(`\`\`\`${lang}`);
-    sections.push(rawCode);
-    sections.push('```\n');
-  }
-
-  // ── Removed Code ─────────────────────────────────────────
-  if (removedCode.trim()) {
-    sections.push('## ❌ Removed Code\n');
-    sections.push(`\`\`\`${lang}`);
-    sections.push(removedCode);
-    sections.push('```\n');
-  }
-
   // ── Footer ───────────────────────────────────────────────
   sections.push('---');
-  sections.push('🛠 Auto-generated by [github-mobile-reader](https://github.com/your-org/github-mobile-reader). Do not edit manually.');
+  sections.push('🛠 Auto-generated by [github-mobile-reader](https://github.com/3rdflr/github-mobile-reader). Do not edit manually.');
 
   return sections.join('\n');
 }

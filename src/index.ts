@@ -21,6 +21,8 @@ export {
   isJSXElement,
   extractJSXComponentName,
   parseJSXToFlowTree,
+  extractChangedSymbols,
+  renderJSXTreeCompact,
 } from './parser';
 
 export type {
