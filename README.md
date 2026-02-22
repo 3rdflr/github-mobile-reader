@@ -23,28 +23,32 @@ GitHub's mobile web renders code in a fixed-width monospace block. Long lines re
 ## Example Output
 
 ```markdown
-## 📄 `src/components/UserProfileModal.tsx`
+## 📄 `src/components/TodoList.tsx`
 
-> 💡 Added a delete account confirmation input and Trash2 icon button.
-> handleDeleteAccount now validates deleteConfirmInput before calling deleteAccount asynchronously.
+> 💡 Filter controls added to TodoList. Tasks can now be filtered by status
+> and sorted by due date. The fetchTasks function is updated to accept filter params.
 
-### ❌ `loadProfile` _(Function)_ — removed
-_Context: `router`_
+**Import changes**
++ `FilterBar`
++ `useSortedTasks`
+- `LegacyLoader` (removed)
 
-### ✏️ `UserProfileModal` _(Function)_ — changed
+### ✏️ `TodoList` _(Component)_ — changed
+Variables added: `filter`, `sortOrder`
+
+### ✏️ `fetchTasks` _(Function)_ — changed
+**Parameters**
++ `filter`
++ `sortOrder`
 **Behavior**
-+ `setShowDeleteConfirm()` called
-+ `setDeleteConfirmInput()` called
-**UI**
-+ `<button>`
-+ `<Trash2>`
-+ `<input>`
++ `fetchTasks()` async call
 
-### ✏️ `handleDeleteAccount` _(Function)_ — changed
+### ✅ `handleFilterChange` _(Function)_ — added
+**Parameters**
++ `field`
++ `value`
 **Behavior**
-+ condition: deleteConfirmInput !== '탈퇴'
-+ `setIsDeleting()` called
-+ `deleteAccount(` async call
++ `setFilter()` called
 ```
 
 ---
@@ -52,10 +56,12 @@ _Context: `router`_
 ## Features
 
 - **Per-function summaries** — each function/component gets its own section with status (added / removed / changed)
-- **Context inline** — simple variable assignments (`router`, `user`, etc.) appear as `_Context: ..._` instead of noisy independent sections
-- **Behavior changes** — detects newly called functions and added conditions
+- **Import changes** — detects newly added or removed imports at the file level
+- **Parameter changes** — detects added or removed function parameters
+- **Variables added** — simple variable assignments attached to the nearest function shown inline
+- **Behavior changes** — detects hook calls, setState, async/await calls, conditionals, error handling, return values
 - **UI changes** — detects added/removed JSX components (generic tags like `div`, `span` are filtered)
-- **Props changes** — detects TypeScript interface/type modifications
+- **Props changes** — detects TypeScript interface/type modifications (long string values abbreviated to `'...'`)
 - **JSX semantic patterns** — `🔄 list → <Component>` (map), `⚡ cond && <Component>` (conditional rendering)
 - **Gemini AI summaries** (optional) — 1–3 sentence natural language summary per file (`> 💡 ...`)
 - **Secure by default** — tokens are injected via environment variables only; no flag that leaks to shell history
@@ -91,6 +97,12 @@ export GITHUB_TOKEN=ghp_xxxx
 
 ```bash
 npx github-mobile-reader --repo owner/repo --pr 42
+```
+
+### Single PR with Gemini AI summaries
+
+```bash
+GEMINI_API_KEY=AIzaSy... npx github-mobile-reader --repo owner/repo --pr 42
 ```
 
 ### All recent PRs
@@ -200,7 +212,9 @@ Every subsequent PR will automatically receive:
 ## Gemini AI Summaries (optional)
 
 Even complex hooks like `useCanvasRenderer` (200+ lines) get summarized in 1–3 sentences.
-Without an API key, behavior is identical to before — no errors, no fallback output.
+Without an API key, behavior is identical — no errors, no fallback output.
+
+Uses **Gemini 2.5 Flash Lite** — fast, low-cost, no thinking overhead.
 
 ### Get a free API key
 
@@ -229,36 +243,47 @@ npx github-mobile-reader --repo owner/repo --pr 42 --gemini-key AIzaSy...
 ## Output Format
 
 ```markdown
-# 📖 PR #1 — feat: add account deletion
+# 📖 PR #7 — feat: add task filtering and sort controls
 
 > Repository: owner/repo
-> Commit: `a1b2c3d`
+> Commit: `3f8a21c`
 > Changed JS/TS files: 3
 
 ---
 
-## 📄 `src/components/UserProfileModal.tsx`
+## 📄 `src/components/TodoList.tsx`
 
 > 💡 AI-generated 1–3 sentence summary (when GEMINI_API_KEY is set)
 
-### ✅ `newFunction` _(Function)_ — added
-_Context: `depVar1`, `depVar2`_
+**Import changes**
++ `FilterBar`
++ `useSortedTasks`
+- `LegacyLoader` (removed)
+
+### ✏️ `TodoList` _(Component)_ — changed
+Variables added: `filter`, `sortOrder`
+
+### ✏️ `fetchTasks` _(Function)_ — changed
+**Parameters**
++ `filter`
++ `sortOrder`
 **Behavior**
-+ `someApi(` async call
-**UI**
-+ `<NewComponent>`
++ `fetchTasks()` async call
 
-### ❌ `oldFunction` _(Function)_ — removed
+### ✅ `handleFilterChange` _(Function)_ — added
+**Parameters**
++ `field`
++ `value`
+**Behavior**
++ `setFilter()` called
 
-### ✏️ `changedFunction` _(Function)_ — changed
+### ✏️ `TaskCard` _(Component)_ — changed
 **Props**
-+ `newProp: string`
-- `oldProp: number`
++ `dueDate: '...'`
 **Behavior**
-+ condition: value !== 'confirm'
-**JSX patterns**
-🔄 `items` → `<ItemCard>`
-⚡ `isVisible` && `<Modal>`
++ condition: !task.completed
+**UI**
++ `<Badge>`
 ```
 
 ### Symbol classification
@@ -268,9 +293,19 @@ _Context: `depVar1`, `depVar2`_
 | `✅ ... — added` | Function/component newly introduced in the diff |
 | `❌ ... — removed` | Function/component deleted in the diff |
 | `✏️ ... — changed` | Existing function/component with modified content |
-| `_Context: `var`_` | Simple variable assignment collapsed inline |
+| `Variables added: x, y` | Simple variable assignments collapsed inline |
 
-### 💅 Style Changes
+### Section types
+
+| Section | What it shows |
+| --- | --- |
+| **Import changes** | Added or removed `import` statements at the file level |
+| **Parameters** | Added or removed function parameters |
+| **Props** | TypeScript interface/type member changes (values > 20 chars shown as `'...'`) |
+| **Behavior** | Hook calls, setState, async/await, conditions, catch blocks, return values |
+| **UI** | Added/removed meaningful JSX components; map (`🔄`) and conditional (`⚡`) patterns |
+
+---
 
 ## npm Library Usage
 
@@ -301,6 +336,8 @@ import {
   parseDiffHunks,          // diff → DiffHunk[]
   attributeLinesToSymbols, // DiffHunk[] → SymbolDiff[]
   generateSymbolSections,  // SymbolDiff[] → string[]
+  extractImportChanges,    // detect added/removed imports
+  extractParamChanges,     // detect added/removed function parameters
 } from 'github-mobile-reader';
 ```
 
@@ -350,10 +387,11 @@ The parser is optimized for JS/TS syntax patterns.
 github-mobile-reader/
 ├── src/
 │   ├── parser.ts    ← diff parsing and symbol analysis (core logic)
-│   ├── gemini.ts    ← Gemini Flash AI summaries (opt-in)
+│   ├── gemini.ts    ← Gemini 2.5 Flash Lite AI summaries (opt-in)
 │   ├── index.ts     ← public npm API
 │   ├── action.ts    ← GitHub Action entry point
-│   └── cli.ts       ← CLI entry point
+│   ├── cli.ts       ← CLI entry point
+│   └── test.ts      ← smoke tests (npx ts-node src/test.ts)
 ├── dist/            ← compiled output (auto-generated)
 ├── reader-output/   ← CLI output directory (gitignored)
 ├── action.yml       ← GitHub Action definition
@@ -368,7 +406,8 @@ github-mobile-reader/
 git clone https://github.com/3rdflr/github-mobile-reader.git
 cd github-mobile-reader
 npm install
-npm run build:all   # build library + Action + CLI
+npm run build:all        # build library + Action + CLI
+npx ts-node src/test.ts  # run smoke tests
 ```
 
 Pull requests are welcome.
