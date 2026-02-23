@@ -1047,10 +1047,8 @@ function buildBehaviorSummary(lines: string[], mode: "added" | "removed" = "adde
     const catchMatch = line.match(/^catch\s*\(\s*(\w+)\s*\)/);
     if (catchMatch) { tier2.push(`(catch) \`${catchMatch[1]}\``); continue; }
 
-    // ── Tier 3: Conditionals (non-guard)
-    // Only match `if (cond) {` or `if (cond)` at end of line — reject inline one-liners
-    // like `if (x) doSomething()` which produce garbled output
-    const condMatch = line.match(/^(if|else if)\s*\(([^)]{1,60})\)\s*\{?\s*$/);
+    // ── Tier 3: Conditionals (non-guard) ────────────────────
+    const condMatch = line.match(/^(if|else if)\s*\((.{1,60})\)/);
     if (condMatch) { tier3.push(`(cond) \`${condMatch[2].trim()}\``); continue; }
 
     // ── Tier 4: useEffect ────────────────────────────────────

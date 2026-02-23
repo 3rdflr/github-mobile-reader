@@ -215,11 +215,7 @@ async function processPR(
     // AI summary (opt-in — only when geminiKey is provided)
     if (geminiKey) {
       const summary = await summarizeWithGemini(filename, diff, geminiKey);
-      if (summary) {
-        const lines = summary.split('\n').filter(l => l.trim());
-        const quoted = lines.map((l, i) => i === 0 ? `> 💡 ${l}` : `> ${l}`).join('\n');
-        sections.push(quoted + '\n');
-      }
+      if (summary) sections.push(`> 💡 ${summary}\n`);
     }
 
     sections.push(body);
