@@ -10,7 +10,7 @@
 
 import * as fs from 'fs';
 import * as path from 'path';
-import { generateReaderMarkdown } from './parser';
+import { generateReaderMarkdown, extractRemovedSymbolNames, extractAddedSymbolNames } from './parser';
 import { summarizeWithGemini } from './gemini';
 
 // ── CLI argument parser ────────────────────────────────────────────────────────
@@ -149,7 +149,31 @@ async function processPR(
     return '';
   }
 
-  // 파일별로 섹션 생성
+  // ── Pass 1: cross-file refactoring detection ───────────────────────────────
+  // Collect which symbols were removed from which file, and added in which file.
+  // If symbol X is removed in file A and added in file B → it was moved.
+  const removedByFile = new Map<string, string[]>(); // filename → removed symbol names
+  const addedByFile   = new Map<string, string[]>(); // filename → added symbol names
+  for (const { filename, diff } of fileDiffs) {
+    removedByFile.set(filename, extractRemovedSymbolNames(diff));
+    addedByFile.set(filename,   extractAddedSymbolNames(diff));
+  }
+
+  // Build: symbol name → destination file (where it was added)
+  const movedToFile = new Map<string, string>();   // symbolName → destFile
+  const movedFromFile = new Map<string, string>(); // symbolName → srcFile
+  for (const [srcFile, removedNames] of removedByFile) {
+    for (const name of removedNames) {
+      for (const [destFile, addedNames] of addedByFile) {
+        if (destFile !== srcFile && addedNames.includes(name)) {
+          movedToFile.set(`${srcFile}::${name}`, destFile);
+          movedFromFile.set(`${destFile}::${name}`, srcFile);
+        }
+      }
+    }
+  }
+
+  // ── Pass 2: generate per-file sections ────────────────────────────────────
   const sections: string[] = [];
 
   sections.push(`# 📖 PR #${prNumber} — ${meta.title}\n`);
@@ -159,11 +183,25 @@ async function processPR(
   sections.push('---\n');
 
   for (const { filename, diff } of fileDiffs) {
+    // Build per-file move maps
+    const movedOutMap = new Map<string, string>();
+    for (const [key, dest] of movedToFile) {
+      const [src, sym] = key.split('::');
+      if (src === filename) movedOutMap.set(sym, dest);
+    }
+    const movedIntoThisFile = new Set<string>();
+    for (const [key] of movedFromFile) {
+      const [dest, sym] = key.split('::');
+      if (dest === filename) movedIntoThisFile.add(sym);
+    }
+
     const section = generateReaderMarkdown(diff, {
       pr: String(prNumber),
       commit: meta.head,
       file: filename,
       repo,
+      movedOutMap: movedOutMap.size > 0 ? movedOutMap : undefined,
+      movedIntoThisFile: movedIntoThisFile.size > 0 ? movedIntoThisFile : undefined,
     });
 
     // Footer 줄 제거 후 내용 확인

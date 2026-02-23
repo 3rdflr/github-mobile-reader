@@ -35,6 +35,10 @@ export interface ReaderMarkdownMeta {
   commit?: string;
   file?: string;
   repo?: string;
+  /** Symbol names known to have moved into this file from another file in the same PR */
+  movedIntoThisFile?: Set<string>;
+  /** Map of symbol name → destination filename for symbols moved out of this file */
+  movedOutMap?: Map<string, string>;
 }
 
 export interface ClassNameChange {
@@ -54,6 +58,9 @@ export interface SymbolDiff {
   status: "added" | "removed" | "modified" | "moved";
   addedLines: string[];
   removedLines: string[];
+  /** When status === "moved", where the symbol moved to/from */
+  movedTo?: string;
+  movedFrom?: string;
 }
 
 interface DiffHunk {
@@ -1179,7 +1186,14 @@ export function generateSymbolSections(
 ): string[] {
   const sections: string[] = [];
   const STATUS_ICON = { added: "✅", removed: "❌", modified: "✏️", moved: "📦" };
-  const STATUS_LABEL = { added: "새로 추가", removed: "제거됨", modified: "변경됨", moved: "다른 파일로 이동됨" };
+  const getStatusLabel = (sym: SymbolDiff) => {
+    if (sym.status === "moved") {
+      if (sym.movedTo) return `→ \`${sym.movedTo}\`로 이동됨`;
+      if (sym.movedFrom) return `← \`${sym.movedFrom}\`에서 이동됨`;
+      return "다른 파일로 이동됨";
+    }
+    return { added: "새로 추가", removed: "제거됨", modified: "변경됨" }[sym.status];
+  };
 
   // Walk the list in order: attach each setup variable to the nearest
   // preceding significant symbol so it appears as an inline Context line.
@@ -1211,27 +1225,40 @@ export function generateSymbolSections(
     const kindLabel = sym.kind === "component" ? "Component" : "Function";
     // Flat bold line instead of ### heading — keeps font size normal on mobile
     sections.push(
-      `**${STATUS_ICON[sym.status]} \`${sym.name}\`** _(${kindLabel})_ — ${STATUS_LABEL[sym.status]}`,
+      `**${STATUS_ICON[sym.status]} \`${sym.name}\`** _(${kindLabel})_ — ${getStatusLabel(sym)}`,
     );
 
     const lines: string[] = [];
 
-    // Setup variables attached to this symbol
+    // Setup variables attached to this symbol (cap at 5)
     if (setupNames.length > 0) {
-      lines.push(`변수: ${setupNames.map((n) => `\`${n}\``).join(", ")}`);
+      const VAR_CAP = 5;
+      const shown = setupNames.slice(0, VAR_CAP).map((n) => `\`${n}\``).join(", ");
+      const extra = setupNames.length > VAR_CAP ? ` 외 ${setupNames.length - VAR_CAP}개` : "";
+      lines.push(`변수: ${shown}${extra}`);
     }
 
-    // Function parameter changes
+    // Function parameter changes (cap at 4, summarise rest)
     const paramChanges = extractParamChanges(sym.addedLines, sym.removedLines);
-    paramChanges.added.forEach((p) => lines.push(`파라미터+ \`${p}\``));
-    paramChanges.removed.forEach((p) => lines.push(`파라미터- \`${p}\``));
+    const PARAM_CAP = 4;
+    paramChanges.added.slice(0, PARAM_CAP).forEach((p) => lines.push(`파라미터+ \`${p}\``));
+    if (paramChanges.added.length > PARAM_CAP)
+      lines.push(`파라미터+ … 외 ${paramChanges.added.length - PARAM_CAP}개`);
+    paramChanges.removed.slice(0, PARAM_CAP).forEach((p) => lines.push(`파라미터- \`${p}\``));
+    if (paramChanges.removed.length > PARAM_CAP)
+      lines.push(`파라미터- … 외 ${paramChanges.removed.length - PARAM_CAP}개`);
 
-    // Props / interface changes
+    // Props / interface changes (cap at 5, summarise rest)
     const props = extractPropsChanges(sym.addedLines, sym.removedLines);
     const abbreviateProp = (p: string) =>
       p.replace(/^(\w[\w?]*:\s*)(['"`])(.{20,})(\2)$/, "$1$2...$2");
-    props.added.forEach((p) => lines.push(`Props+ \`${abbreviateProp(p)}\``));
-    props.removed.forEach((p) => lines.push(`Props- \`${abbreviateProp(p)}\``));
+    const PROPS_CAP = 5;
+    props.added.slice(0, PROPS_CAP).forEach((p) => lines.push(`Props+ \`${abbreviateProp(p)}\``));
+    if (props.added.length > PROPS_CAP)
+      lines.push(`Props+ … 외 ${props.added.length - PROPS_CAP}개`);
+    props.removed.slice(0, PROPS_CAP).forEach((p) => lines.push(`Props- \`${abbreviateProp(p)}\``));
+    if (props.removed.length > PROPS_CAP)
+      lines.push(`Props- … 외 ${props.removed.length - PROPS_CAP}개`);
 
     // Behavioral summary (skip for moved — content lives in the destination file)
     if (sym.status !== "removed" && sym.status !== "moved") {
@@ -1327,6 +1354,30 @@ export function renderJSXTreeCompact(nodes: FlowNode[], maxDepth = 3): string {
 }
 
 /**
+ * Extract symbol names that were purely removed (not modified) in a diff.
+ * Used by cli.ts for cross-file refactoring detection.
+ */
+export function extractRemovedSymbolNames(diffText: string): string[] {
+  const hunks = parseDiffHunks(diffText);
+  const symbolDiffs = attributeLinesToSymbols(hunks);
+  return symbolDiffs
+    .filter((s) => s.status === "removed" && s.name !== "module-level")
+    .map((s) => s.name);
+}
+
+/**
+ * Extract symbol names that were purely added (not modified) in a diff.
+ * Used by cli.ts for cross-file refactoring detection.
+ */
+export function extractAddedSymbolNames(diffText: string): string[] {
+  const hunks = parseDiffHunks(diffText);
+  const symbolDiffs = attributeLinesToSymbols(hunks);
+  return symbolDiffs
+    .filter((s) => s.status === "added" && s.name !== "module-level")
+    .map((s) => s.name);
+}
+
+/**
  * Generate the complete Reader Markdown document
  */
 export function generateReaderMarkdown(
@@ -1379,12 +1430,29 @@ export function generateReaderMarkdown(
   const hunks = parseDiffHunks(diffText);
   const symbolDiffs = attributeLinesToSymbols(hunks);
 
-  // ── Detect moved symbols (removed here, imported elsewhere) ──
+  // ── Detect moved symbols (removed here, imported elsewhere in same file) ──
   const fileImportChanges = extractImportChanges(added, removed);
   const newlyImported = new Set(fileImportChanges.added);
   for (const sym of symbolDiffs) {
     if (sym.status === "removed" && newlyImported.has(sym.name)) {
       sym.status = "moved";
+    }
+  }
+
+  // ── Apply cross-file move context from cli.ts ─────────────
+  if (meta.movedOutMap) {
+    for (const sym of symbolDiffs) {
+      if (sym.status === "removed" && meta.movedOutMap.has(sym.name)) {
+        sym.status = "moved";
+        sym.movedTo = meta.movedOutMap.get(sym.name);
+      }
+    }
+  }
+  if (meta.movedIntoThisFile) {
+    for (const sym of symbolDiffs) {
+      if (sym.status === "added" && meta.movedIntoThisFile.has(sym.name)) {
+        sym.movedFrom = "다른 파일";
+      }
     }
   }
 
