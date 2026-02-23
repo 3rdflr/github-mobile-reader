@@ -1,4 +1,4 @@
-# 📖 github-mobile-reader
+# github-mobile-reader
 
 > Transform GitHub PR diffs into mobile-friendly Markdown — understand what changed per function without reading long code.
 
@@ -23,7 +23,13 @@ GitHub's mobile web renders code in a fixed-width monospace block. Long lines re
 ## Example Output
 
 ```markdown
-## 📄 `src/components/TodoList.tsx`
+# PR #7 — feat: add task filtering and sort controls
+
+owner/repo · `3f8a21c` · JS/TS 3개 파일 변경
+
+---
+
+## `src/components/TodoList.tsx`
 
 > 💡 Previously fetched all tasks unconditionally. Now accepts filter and sortOrder
 > params — fetchTasks is called conditionally and filter state drives re-fetching.
@@ -35,11 +41,14 @@ GitHub's mobile web renders code in a fixed-width monospace block. Long lines re
 
 **✏️ `TodoList`** _(Component)_ — changed
   변수: `filter`, `sortOrder`
+  + (state) `filter` ← `useState({})`
+  ~ `useEffect` deps 변경
 
 **✏️ `fetchTasks`** _(Function)_ — changed
   파라미터+ `filter`
   파라미터+ `sortOrder`
-  + (API) `fetchTasks(filter)` → `tasks`
+  + (guard) `!filter` → early return
+  + (API) `api.getTasks(filter)` → `tasks`
 
 **✅ `handleFilterChange`** _(Function)_ — added
   파라미터+ `field`
@@ -51,14 +60,20 @@ GitHub's mobile web renders code in a fixed-width monospace block. Long lines re
 
 ## Features
 
-- **Per-function summaries** — each function/component gets its own line with status (added / removed / changed); no headings, normal font size on mobile
+- **Per-function summaries** — each function/component gets its own bold line with status (added / removed / changed); no `###` headings, normal font size on mobile
 - **Side-effect labels** — behavior lines are prefixed with `(API)`, `(setState)`, `(state)`, `(cond)`, `(catch)`, `(guard)` so you can tell at a glance what kind of change it is
 - **Guard clause detection** — `if (!x) return` patterns surfaced as `(guard) early return` entries
 - **Import changes** — newly added or removed imports at the file level
-- **Parameter changes** — added or removed function parameters
-- **Variables** — simple variable assignments attached to the nearest function shown inline
-- **UI changes** — added/removed JSX components (generic tags like `div`, `span` are filtered); map (`🔄`) and conditional (`⚡`) patterns
-- **Props changes** — TypeScript interface/type member changes (long string values abbreviated to `'...'`)
+- **Parameter changes** — added or removed function parameters (capped at 4, rest shown as `… 외 N개`)
+- **Variables** — simple variable assignments attached to the nearest function shown inline (capped at 5)
+- **UI changes** — added/removed JSX components (generic tags like `div`, `span` are filtered); map and conditional rendering patterns
+- **Props changes** — TypeScript interface/type member changes (capped at 5; long string values abbreviated to `'...'`)
+- **useEffect deduplication** — if the same `useEffect` appears in both added and removed sides, shown once as `~ useEffect deps 변경` instead of duplicating
+- **Cross-file refactoring detection** — symbols removed in one file and added in another within the same PR are classified as `📦 moved` rather than `❌ removed`
+- **False-removed prevention** — symbols that still appear in context lines of the diff are reclassified from `removed` to `modified`
+- **Syntactically incomplete line filtering** — mid-expression fragments (unbalanced parentheses, trailing operators) are excluded before analysis
+- **Test file summaries** — test/spec files show grouped `describe`/`it` block names instead of code analysis
+- **Config file summaries** — vitest/jest/vite config changes show added/removed plugins instead of code analysis
 - **Gemini AI summaries** (optional) — focuses on business logic change and side effects, not raw lines (`> 💡 ...`)
 - **Secure by default** — tokens are injected via environment variables only; no flag that leaks to shell history
 
@@ -133,15 +148,15 @@ Automatically generates a Reader document and posts a comment on every PR.
 Create `.github/workflows/mobile-reader.yml`:
 
 ```yaml
-name: 📖 Mobile Reader
+name: Mobile Reader
 
 on:
   pull_request:
     types: [opened, synchronize, reopened]
 
 permissions:
-  contents: write       # commit the generated .md file
-  pull-requests: write  # post the PR comment
+  pull-requests: write
+  issues: write
 
 jobs:
   generate-reader:
@@ -157,51 +172,38 @@ jobs:
       - name: Setup Node
         uses: actions/setup-node@v4
         with:
-          github_token: ${{ secrets.GITHUB_TOKEN }}
-          base_branch: ${{ github.base_ref }}
-          output_dir: docs/reader
-          gemini_api_key: ${{ secrets.GEMINI_API_KEY }}  # optional
+          node-version: '20'
+
+      - name: Generate Reader Markdown
+        run: npx github-mobile-reader@latest --repo ${{ github.repository }} --pr ${{ github.event.pull_request.number }} --out ./reader-output
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
       - name: Post PR Comment
-        uses: actions/github-script@v7
-        with:
-          script: |
-            const fs = require('fs');
-            const path = './reader-output/pr-${{ github.event.pull_request.number }}.md';
-            if (!fs.existsSync(path)) { console.log('No reader file generated.'); return; }
-            const body = fs.readFileSync(path, 'utf8');
-            const comments = await github.rest.issues.listComments({
-              owner: context.repo.owner, repo: context.repo.repo,
-              issue_number: ${{ github.event.pull_request.number }},
-            });
-            const prev = comments.data.find(c =>
-              c.user.login === 'github-actions[bot]' && c.body.startsWith('# 📖 PR #')
-            );
-            if (prev) await github.rest.issues.deleteComment({
-              owner: context.repo.owner, repo: context.repo.repo, comment_id: prev.id,
-            });
-            await github.rest.issues.createComment({
-              owner: context.repo.owner, repo: context.repo.repo,
-              issue_number: ${{ github.event.pull_request.number }}, body,
-            });
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+        run: |
+          FILE="./reader-output/pr-${PR_NUMBER}.md"
+          if [ ! -f "$FILE" ]; then
+            echo "No reader file generated."
+            exit 0
+          fi
+
+          # Delete previous bot comment if exists
+          PREV_ID=$(gh api repos/${{ github.repository }}/issues/${PR_NUMBER}/comments \
+            --jq '.[] | select(.user.login == "github-actions[bot]" and (.body | startswith("# PR #"))) | .id' \
+            | head -1)
+          if [ -n "$PREV_ID" ]; then
+            gh api -X DELETE repos/${{ github.repository }}/issues/comments/${PREV_ID}
+          fi
+
+          gh pr comment ${PR_NUMBER} --repo ${{ github.repository }} --body-file "$FILE"
 ```
 
 ### Step 2 — Open a PR
 
-Every subsequent PR will automatically receive:
-- A Reader Markdown file at `docs/reader/pr-<number>.md`
-- A summary comment on the PR
-
-### Action Inputs
-
-| Input            | Required | Default       | Description                                        |
-| ---------------- | -------- | ------------- | -------------------------------------------------- |
-| `github_token`   | ✅       | —             | Use `${{ secrets.GITHUB_TOKEN }}`                  |
-| `base_branch`    | ❌       | `main`        | Base branch the PR is merging into                 |
-| `output_dir`     | ❌       | `docs/reader` | Directory for generated `.md` files                |
-| `gemini_api_key` | ❌       | —             | Gemini API key — omit to disable AI summaries      |
+Every subsequent PR will automatically receive a summary comment.
 
 ---
 
@@ -230,7 +232,7 @@ npx github-mobile-reader --repo owner/repo --pr 42 --gemini-key AIzaSy...
 
 1. Go to **Settings → Secrets and variables → Actions → New repository secret**
 2. Name: `GEMINI_API_KEY`, Value: your key
-3. Add `gemini_api_key: ${{ secrets.GEMINI_API_KEY }}` to the workflow (see example above)
+3. Add `--gemini-key ${{ secrets.GEMINI_API_KEY }}` to the `Generate Reader Markdown` step
 
 > **Security:** GitHub Secrets are masked in all workflow logs and never exposed in plain text.
 
@@ -239,15 +241,13 @@ npx github-mobile-reader --repo owner/repo --pr 42 --gemini-key AIzaSy...
 ## Output Format
 
 ```markdown
-# 📖 PR #7 — feat: add task filtering and sort controls
+# PR #7 — feat: add task filtering and sort controls
 
-> Repository: owner/repo
-> Commit: `3f8a21c`
-> Changed JS/TS files: 3
+owner/repo · `3f8a21c` · JS/TS 3개 파일 변경
 
 ---
 
-## 📄 `src/components/TodoList.tsx`
+## `src/components/TodoList.tsx`
 
 > 💡 Previously fetched all tasks unconditionally. Now accepts filter and sortOrder
 > params — fetchTasks is called conditionally and filter state drives re-fetching.
@@ -259,8 +259,8 @@ npx github-mobile-reader --repo owner/repo --pr 42 --gemini-key AIzaSy...
 
 **✏️ `TodoList`** _(Component)_ — changed
   변수: `filter`, `sortOrder`
-  + (상태) `filter` ← `useState({})`
-  + `useEffect` [filter] 변경 시 실행
+  + (state) `filter` ← `useState({})`
+  ~ `useEffect` deps 변경
 
 **✏️ `fetchTasks`** _(Function)_ — changed
   파라미터+ `filter`
@@ -286,12 +286,16 @@ npx github-mobile-reader --repo owner/repo --pr 42 --gemini-key AIzaSy...
 | `✅ ... — added` | Function/component newly introduced in the diff |
 | `❌ ... — removed` | Function/component deleted in the diff |
 | `✏️ ... — changed` | Existing function/component with modified content |
-| `변수: x, y` | Simple variable assignments collapsed inline |
+| `📦 ... — moved` | Symbol removed here and added in another file within the same PR |
+| `변수: x, y` | Simple variable assignments collapsed inline (up to 5, rest shown as `외 N개`) |
 
 ### Line prefixes
 
 | Prefix | Meaning |
 | --- | --- |
+| `+` | Added behavior |
+| `-` | Removed behavior |
+| `~` | Changed behavior (same signal in both added and removed sides, e.g. `useEffect` deps) |
 | `(API)` | `await` call — fetches data from a server or external service |
 | `(setState)` | `setState` call — updates React state |
 | `(state)` | Hook assignment — `const x = useHook()` |
@@ -299,8 +303,8 @@ npx github-mobile-reader --repo owner/repo --pr 42 --gemini-key AIzaSy...
 | `(guard)` | Guard clause — `if (!x) return` early-exit pattern |
 | `(catch)` | `catch` block |
 | `(return)` | Non-trivial return value |
-| `파라미터+` / `파라미터-` | Function parameter added / removed |
-| `Props+` / `Props-` | TypeScript interface/type member added / removed |
+| `파라미터+` / `파라미터-` | Function parameter added / removed (up to 4) |
+| `Props+` / `Props-` | TypeScript interface/type member added / removed (up to 5) |
 | `UI:` | JSX component added or removed |
 
 ---
@@ -330,12 +334,14 @@ console.log(markdown);
 
 ```ts
 import {
-  generateReaderMarkdown,  // diff → complete Markdown document
-  parseDiffHunks,          // diff → DiffHunk[]
-  attributeLinesToSymbols, // DiffHunk[] → SymbolDiff[]
-  generateSymbolSections,  // SymbolDiff[] → string[]
-  extractImportChanges,    // detect added/removed imports
-  extractParamChanges,     // detect added/removed function parameters
+  generateReaderMarkdown,    // diff → complete Markdown document
+  parseDiffHunks,            // diff → DiffHunk[]
+  attributeLinesToSymbols,   // DiffHunk[] → SymbolDiff[]
+  generateSymbolSections,    // SymbolDiff[] → string[]
+  extractImportChanges,      // detect added/removed imports
+  extractParamChanges,       // detect added/removed function parameters
+  extractRemovedSymbolNames, // diff → string[] (purely removed symbol names)
+  extractAddedSymbolNames,   // diff → string[] (purely added symbol names)
 } from 'github-mobile-reader';
 ```
 
@@ -346,8 +352,10 @@ import {
 | `diffText` | `string` | Raw `git diff` output |
 | `meta.pr` | `string?` | Pull request number |
 | `meta.commit` | `string?` | Commit SHA |
-| `meta.file` | `string?` | File name |
+| `meta.file` | `string?` | File name (used to detect test/config files) |
 | `meta.repo` | `string?` | Repository in `owner/repo` format |
+| `meta.movedOutMap` | `Map<string, string>?` | Symbol → destination file (for cross-file move annotation) |
+| `meta.movedIntoThisFile` | `Set<string>?` | Symbol names that moved into this file from another |
 
 **Returns:** `string` — the complete Markdown document.
 
@@ -357,9 +365,11 @@ import {
 interface SymbolDiff {
   name: string;
   kind: 'component' | 'function' | 'setup';
-  status: 'added' | 'removed' | 'modified';
+  status: 'added' | 'removed' | 'modified' | 'moved';
   addedLines: string[];
   removedLines: string[];
+  movedTo?: string;   // destination file when status === 'moved'
+  movedFrom?: string; // source file when status === 'moved'
 }
 ```
 
@@ -371,11 +381,11 @@ The parser is optimized for JS/TS syntax patterns.
 
 | Language | Extensions | Support |
 | --- | --- | --- |
-| JavaScript | `.js` `.mjs` `.cjs` | ✅ Full |
-| TypeScript | `.ts` | ✅ Full |
-| React JSX | `.jsx` | ✅ Full |
-| React TSX | `.tsx` | ✅ Full |
-| Others | — | 🔜 Planned |
+| JavaScript | `.js` `.mjs` `.cjs` | Full |
+| TypeScript | `.ts` | Full |
+| React JSX | `.jsx` | Full |
+| React TSX | `.tsx` | Full |
+| Others | — | Planned |
 
 ---
 
@@ -388,8 +398,7 @@ github-mobile-reader/
 │   ├── gemini.ts    ← Gemini 2.5 Flash Lite AI summaries (opt-in)
 │   ├── index.ts     ← public npm API
 │   ├── action.ts    ← GitHub Action entry point
-│   ├── cli.ts       ← CLI entry point
-│   └── test.ts      ← smoke tests (npx ts-node src/test.ts)
+│   └── cli.ts       ← CLI entry point (2-pass cross-file analysis)
 ├── dist/            ← compiled output (auto-generated)
 ├── reader-output/   ← CLI output directory (gitignored)
 ├── action.yml       ← GitHub Action definition
@@ -404,8 +413,7 @@ github-mobile-reader/
 git clone https://github.com/3rdflr/github-mobile-reader.git
 cd github-mobile-reader
 npm install
-npm run build:all        # build library + Action + CLI
-npx ts-node src/test.ts  # run smoke tests
+npm run build:all   # build library + Action + CLI
 ```
 
 Pull requests are welcome.
