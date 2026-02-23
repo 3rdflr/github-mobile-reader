@@ -963,6 +963,8 @@ export function extractPropsChanges(
 /** Returns true if a line has unbalanced parentheses/brackets — likely a mid-expression fragment */
 function isSyntacticallyIncomplete(line: string): boolean {
   const t = line.trim();
+  // Reject lines that start with a closing paren/bracket — they are continuations of a previous line
+  if (/^[)\]]/.test(t)) return true;
   // Count unmatched open parens/brackets
   let parens = 0, brackets = 0;
   for (const ch of t) {
@@ -971,119 +973,126 @@ function isSyntacticallyIncomplete(line: string): boolean {
     else if (ch === "[") brackets++;
     else if (ch === "]") brackets--;
   }
-  // If parens or brackets are unbalanced, it's a fragment
-  if (parens !== 0 || brackets < 0) return true;
+  // If parens or brackets are unbalanced (open or close), it's a fragment
+  if (parens !== 0 || brackets !== 0) return true;
   // Lines ending with an operator or opening brace mid-expression
   if (/[,(+\-*&|?]$/.test(t)) return true;
   return false;
 }
 
 function buildBehaviorSummary(lines: string[], mode: "added" | "removed" = "added"): string[] {
-  const summary: string[] = [];
-  // Filter out syntactically incomplete lines before analysis
+  // Priority buckets — each has its own cap:
+  //   tier1 (state/API): unlimited — core data flow, always shown
+  //   tier2 (guard/catch): max 2 — safety/error boundaries
+  //   tier3 (cond): max 2 — branching logic
+  //   tier4 (setState/useEffect/return): max 2 — side effects
+  const tier1: string[] = []; // (state), (API)
+  const tier2: string[] = []; // (guard), (catch)
+  const tier3: string[] = []; // (cond)
+  const tier4: string[] = []; // (setState), useEffect, (return)
+
   const normalized = normalizeCode(lines).filter((l) => !isSyntacticallyIncomplete(l));
 
   for (const line of normalized) {
-    // React state: const [x, setX] = useState(initialValue)
+    // ── Tier 1: React state ──────────────────────────────────
     const stateMatch = line.match(/const\s+\[(\w+),\s*set\w+\]\s*=\s*useState\s*\(([^)]*)\)/);
     if (stateMatch) {
       const init = stateMatch[2].trim();
-      const initLabel = init.length > 0 && init !== "" ? ` = ${init}` : "";
-      const label = mode === "removed"
+      const initLabel = init.length > 0 ? ` = ${init}` : "";
+      tier1.push(mode === "removed"
         ? `state \`${stateMatch[1]}\` 제거`
-        : `state \`${stateMatch[1]}\`${initLabel} 추가`;
-      summary.push(label);
+        : `state \`${stateMatch[1]}\`${initLabel} 추가`);
       continue;
     }
 
-    // useEffect with deps array
+    // ── Tier 1: Hook assigned to variable ───────────────────
+    const hookAssignMatch = line.match(/const\s+(\w+)\s*=\s*(use[A-Z]\w+)\s*\(([^)]*)\)/);
+    if (hookAssignMatch) {
+      const arg = hookAssignMatch[3].trim();
+      const argLabel = arg.length > 0 && arg.length <= 30 ? `(${arg})` : "";
+      tier1.push(`(state) \`${hookAssignMatch[1]}\` ← \`${hookAssignMatch[2]}${argLabel}\``);
+      continue;
+    }
+
+    // ── Tier 1: Bare hook call ───────────────────────────────
+    const hookMatch = line.match(/^\s*(use[A-Z]\w+)\s*\(/);
+    if (hookMatch) { tier1.push(`(state) \`${hookMatch[1]}\` called`); continue; }
+
+    // ── Tier 1: Async/await assigned ────────────────────────
+    const awaitAssignMatch = line.match(/(?:const|let|var)\s+(\w+)\s*=\s*await\s+([\w.]+)\s*\(([^)]{0,40})\)/);
+    if (awaitAssignMatch) {
+      const arg = awaitAssignMatch[3].trim();
+      const argLabel = arg.length > 0 && arg.length <= 25 ? `(${arg})` : "()";
+      tier1.push(`(API) \`${awaitAssignMatch[2]}${argLabel}\` → \`${awaitAssignMatch[1]}\``);
+      continue;
+    }
+
+    // ── Tier 1: Bare await call ──────────────────────────────
+    const awaitMatch = line.match(/^await\s+([\w.]+)\s*\(([^)]{0,40})\)/);
+    if (awaitMatch) {
+      const arg = awaitMatch[2].trim();
+      const argLabel = arg.length > 0 && arg.length <= 25 ? `(${arg})` : "()";
+      tier1.push(`(API) \`${awaitMatch[1]}${argLabel}\``);
+      continue;
+    }
+
+    // ── Tier 2: Guard clause ─────────────────────────────────
+    const guardMatch = line.match(/^if\s*\((.{1,50})\)\s*return/);
+    if (guardMatch) {
+      tier2.push(`(guard) \`${guardMatch[1].trim()}\` → early return`);
+      continue;
+    }
+
+    // ── Tier 2: Error handling ───────────────────────────────
+    const catchMatch = line.match(/^catch\s*\(\s*(\w+)\s*\)/);
+    if (catchMatch) { tier2.push(`(catch) \`${catchMatch[1]}\``); continue; }
+
+    // ── Tier 3: Conditionals (non-guard) ────────────────────
+    const condMatch = line.match(/^(if|else if)\s*\((.{1,60})\)/);
+    if (condMatch) { tier3.push(`(cond) \`${condMatch[2].trim()}\``); continue; }
+
+    // ── Tier 4: useEffect ────────────────────────────────────
     const effectMatch = line.match(/useEffect\s*\(\s*(?:async\s*)?\(\s*\)\s*=>\s*\{?|useEffect\s*\(\s*\(\s*\)\s*=>/);
     if (effectMatch) {
       const depsMatch = line.match(/useEffect[^,]*,\s*\[([^\]]*)\]/);
       if (depsMatch) {
         const deps = depsMatch[1].trim();
-        summary.push(deps.length === 0
+        tier4.push(deps.length === 0
           ? `\`useEffect\` 마운트 시 1회 실행`
           : `\`useEffect\` [${deps}] 변경 시 실행`);
       } else {
-        summary.push(`\`useEffect\` 등록`);
+        tier4.push(`\`useEffect\` 등록`);
       }
       continue;
     }
 
-    // Guard clause: if (!x) return / if (x) return
-    const guardMatch = line.match(/^if\s*\((.{1,50})\)\s*return/);
-    if (guardMatch) {
-      summary.push(`(guard) \`${guardMatch[1].trim()}\` → early return`);
-      continue;
-    }
-
-    // Hook calls assigned to variable: const x = useSomeHook(arg)
-    const hookAssignMatch = line.match(/const\s+(\w+)\s*=\s*(use[A-Z]\w+)\s*\(([^)]*)\)/);
-    if (hookAssignMatch) {
-      const arg = hookAssignMatch[3].trim();
-      const argLabel = arg.length > 0 && arg.length <= 30 ? `(${arg})` : "";
-      summary.push(`(state) \`${hookAssignMatch[1]}\` ← \`${hookAssignMatch[2]}${argLabel}\``);
-      continue;
-    }
-
-    // Hook calls (bare): useCallback, useMemo, etc.
-    const hookMatch = line.match(/^\s*(use[A-Z]\w+)\s*\(/);
-    if (hookMatch) { summary.push(`(state) \`${hookMatch[1]}\` called`); continue; }
-
-    // Async/await assigned: const x = await foo(arg)
-    const awaitAssignMatch = line.match(/(?:const|let|var)\s+(\w+)\s*=\s*await\s+([\w.]+)\s*\(([^)]{0,40})\)/);
-    if (awaitAssignMatch) {
-      const arg = awaitAssignMatch[3].trim();
-      const argLabel = arg.length > 0 && arg.length <= 25 ? `(${arg})` : "()";
-      summary.push(`(API) \`${awaitAssignMatch[2]}${argLabel}\` → \`${awaitAssignMatch[1]}\``);
-      continue;
-    }
-
-    // Bare await call: await foo(arg)
-    const awaitMatch = line.match(/^await\s+([\w.]+)\s*\(([^)]{0,40})\)/);
-    if (awaitMatch) {
-      const arg = awaitMatch[2].trim();
-      const argLabel = arg.length > 0 && arg.length <= 25 ? `(${arg})` : "()";
-      summary.push(`(API) \`${awaitMatch[1]}${argLabel}\``);
-      continue;
-    }
-
-    // Conditionals (non-guard)
-    const condMatch = line.match(/^(if|else if)\s*\((.{1,60})\)/);
-    if (condMatch) { summary.push(`(cond) \`${condMatch[2].trim()}\``); continue; }
-
-    // Error handling
-    const catchMatch = line.match(/^catch\s*\(\s*(\w+)\s*\)/);
-    if (catchMatch) { summary.push(`(catch) \`${catchMatch[1]}\``); continue; }
-
-    // Return value (non-trivial, non-JSX)
-    const returnMatch = line.match(/^return\s+(.{3,60})/);
-    if (returnMatch && !returnMatch[1].startsWith("<") && !returnMatch[1].startsWith("{")) {
-      const val = returnMatch[1].trim().replace(/[;,]$/, "");
-      if (val.length <= 50) summary.push(`(return) \`${val}\``);
-      continue;
-    }
-
-    // setState calls with argument: setFoo(value)
+    // ── Tier 4: setState calls ───────────────────────────────
     const setStateMatch = line.match(/^(set[A-Z]\w+)\s*\(([^)]{0,40})\)/);
     if (setStateMatch) {
       const arg = setStateMatch[2].trim();
       const argLabel = arg.length > 0 && arg.length <= 30 ? `(${arg})` : "()";
-      summary.push(`(setState) \`${setStateMatch[1]}${argLabel}\``);
+      tier4.push(`(setState) \`${setStateMatch[1]}${argLabel}\``);
       continue;
     }
 
-    // Generic function calls at root level
-    const callMatch = line.match(/^(\w+)\s*\(([^)]{0,40})\)/);
-    if (callMatch && !["if", "else", "for", "while", "switch", "catch", "function"].includes(callMatch[1])) {
-      const arg = callMatch[2].trim();
-      const argLabel = arg.length > 0 && arg.length <= 25 ? `(${arg})` : "()";
-      summary.push(`\`${callMatch[1]}${argLabel}\``);
+    // ── Tier 4: Non-trivial return value ─────────────────────
+    const returnMatch = line.match(/^return\s+(.{3,60})/);
+    if (returnMatch && !returnMatch[1].startsWith("<") && !returnMatch[1].startsWith("{")) {
+      const val = returnMatch[1].trim().replace(/[;,]$/, "");
+      if (val.length <= 50) tier4.push(`(return) \`${val}\``);
+      continue;
     }
   }
 
-  return [...new Set(summary)].slice(0, 8);
+  // Merge buckets with per-tier caps, then deduplicate
+  const result = [
+    ...[...new Set(tier1)].slice(0, 4),   // Tier 1: max 4 (state/API — core data flow)
+    ...[...new Set(tier2)].slice(0, 2),   // Tier 2: max 2 (guard/catch)
+    ...[...new Set(tier3)].slice(0, 2),   // Tier 3: max 2 (cond)
+    ...[...new Set(tier4)].slice(0, 2),   // Tier 4: max 2 (setState/useEffect/return)
+  ];
+
+  return result;
 }
 
 // Generic / structural HTML tags that carry no semantic meaning in diffs
@@ -1352,6 +1361,9 @@ export function generateSymbolSections(
       buildJSXDiffSummary(addedTree, removedTree, sym.addedLines, sym.removedLines)
         .forEach((l) => lines.push(`UI: ${l.replace(/^[+-]\s*/, "")}`));
     }
+
+    // Skip symbols with no meaningful content (e.g. only context lines with no added/removed analysis)
+    if (lines.length === 0 && sym.status === "modified") continue;
 
     lines.forEach((l) => sections.push(`  ${l}`));
     sections.push("");
