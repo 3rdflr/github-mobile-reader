@@ -102,7 +102,11 @@ async function writeMarkdown(
     // AI summary (opt-in — only when GEMINI_API_KEY is set)
     if (geminiKey) {
       const summary = await summarizeWithGemini(filename, diff, geminiKey);
-      if (summary) parts.push(`> 💡 ${summary}\n`);
+      if (summary) {
+        const lines = summary.split('\n').filter(l => l.trim());
+        const quoted = lines.map((l, i) => i === 0 ? `> 💡 ${l}` : `> ${l}`).join('\n');
+        parts.push(quoted + '\n');
+      }
     }
 
     parts.push(section);
