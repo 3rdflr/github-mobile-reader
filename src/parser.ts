@@ -851,9 +851,12 @@ function extractSymbolFromHunkHeader(header: string): string | undefined {
  */
 export function attributeLinesToSymbols(hunks: DiffHunk[]): SymbolDiff[] {
   const symbolMap = new Map<string, { added: string[]; removed: string[]; kind: SymbolKind }>();
+  // Track context lines per symbol to detect "still alive" symbols
+  const contextLines = new Map<string, string[]>();
 
   const getOrCreate = (name: string, kind: SymbolKind) => {
     if (!symbolMap.has(name)) symbolMap.set(name, { added: [], removed: [], kind });
+    if (!contextLines.has(name)) contextLines.set(name, []);
     return symbolMap.get(name)!;
   };
 
@@ -873,6 +876,11 @@ export function attributeLinesToSymbols(hunks: DiffHunk[]): SymbolDiff[] {
 
       if (kind === "added") getOrCreate(currentSymbol, currentKind).added.push(content);
       else if (kind === "removed") getOrCreate(currentSymbol, currentKind).removed.push(content);
+      else {
+        // context line — proves the symbol still exists in the file
+        getOrCreate(currentSymbol, currentKind);
+        contextLines.get(currentSymbol)!.push(content);
+      }
     }
   }
 
@@ -899,11 +907,15 @@ export function attributeLinesToSymbols(hunks: DiffHunk[]): SymbolDiff[] {
       : effectiveRemoved ? "removed"
       : "modified";
 
-    // Refactor-out detection: symbol appears "removed" but is still referenced
-    // in other added lines (e.g. component body rewritten after helper extraction)
     if (status === "removed") {
+      // Refactor-out detection 1: name still referenced in other symbols' added lines
       const namePattern = new RegExp(`\\b${name}\\b`);
       if (allAddedLines.some((l) => namePattern.test(l))) {
+        status = "modified";
+      }
+      // Refactor-out detection 2: symbol has context lines → it still exists in the file,
+      // only some inner logic was removed (e.g. inlined helpers extracted to another file)
+      else if ((contextLines.get(name)?.length ?? 0) > 0) {
         status = "modified";
       }
     }
@@ -948,9 +960,28 @@ export function extractPropsChanges(
  * Summarize behavioral signals from a set of diff lines.
  * Returns at most 8 human-readable bullet strings.
  */
+/** Returns true if a line has unbalanced parentheses/brackets — likely a mid-expression fragment */
+function isSyntacticallyIncomplete(line: string): boolean {
+  const t = line.trim();
+  // Count unmatched open parens/brackets
+  let parens = 0, brackets = 0;
+  for (const ch of t) {
+    if (ch === "(") parens++;
+    else if (ch === ")") parens--;
+    else if (ch === "[") brackets++;
+    else if (ch === "]") brackets--;
+  }
+  // If parens or brackets are unbalanced, it's a fragment
+  if (parens !== 0 || brackets < 0) return true;
+  // Lines ending with an operator or opening brace mid-expression
+  if (/[,(+\-*&|?]$/.test(t)) return true;
+  return false;
+}
+
 function buildBehaviorSummary(lines: string[], mode: "added" | "removed" = "added"): string[] {
   const summary: string[] = [];
-  const normalized = normalizeCode(lines);
+  // Filter out syntactically incomplete lines before analysis
+  const normalized = normalizeCode(lines).filter((l) => !isSyntacticallyIncomplete(l));
 
   for (const line of normalized) {
     // React state: const [x, setX] = useState(initialValue)
@@ -1262,9 +1293,54 @@ export function generateSymbolSections(
 
     // Behavioral summary (skip for moved — content lives in the destination file)
     if (sym.status !== "removed" && sym.status !== "moved") {
-      buildBehaviorSummary(sym.addedLines).forEach((l) => lines.push(`+ ${l}`));
-    }
-    if (sym.status !== "added" && sym.status !== "moved" && sym.removedLines.length > 0) {
+      const addedBehavior = buildBehaviorSummary(sym.addedLines);
+      const removedBehavior = sym.status !== "added" && sym.removedLines.length > 0
+        ? buildBehaviorSummary(sym.removedLines, "removed")
+        : [];
+
+      // Deduplicate: if the same signal appears in both added and removed,
+      // it means it was modified (e.g. useEffect deps changed) — show once as changed
+      const deduped = addedBehavior.filter((l) => {
+        // Strip leading markers to get the core signal for comparison
+        const core = l
+          .replace(/^state `(\w+)`.*$/, "state:$1")
+          .replace(/^`useEffect`.*$/, "useEffect");
+        const removedCore = removedBehavior.map((r) =>
+          r.replace(/^state `(\w+)`.*$/, "state:$1")
+           .replace(/^`useEffect`.*$/, "useEffect"),
+        );
+        return !removedCore.includes(core);
+      });
+
+      // Items that exist in removed but not added → changed (show as modified)
+      const changedOnly = removedBehavior.filter((l) => {
+        const core = l
+          .replace(/^state `(\w+)`.*$/, "state:$1")
+          .replace(/^`useEffect`.*$/, "useEffect");
+        const addedCore = addedBehavior.map((a) =>
+          a.replace(/^state `(\w+)`.*$/, "state:$1")
+           .replace(/^`useEffect`.*$/, "useEffect"),
+        );
+        return addedCore.includes(core);
+      });
+
+      deduped.forEach((l) => lines.push(`+ ${l}`));
+      // Show "changed" items (in both sides) without +/- prefix
+      changedOnly.slice(0, 2).forEach((l) => lines.push(`~ ${l.replace(/^state `\w+` 제거$/, "").replace(/^`useEffect`.*$/, "`useEffect` deps 변경")}`));
+
+      // Purely removed signals (not in added)
+      const pureRemoved = removedBehavior.filter((l) => {
+        const core = l
+          .replace(/^state `(\w+)`.*$/, "state:$1")
+          .replace(/^`useEffect`.*$/, "useEffect");
+        const addedCore = addedBehavior.map((a) =>
+          a.replace(/^state `(\w+)`.*$/, "state:$1")
+           .replace(/^`useEffect`.*$/, "useEffect"),
+        );
+        return !addedCore.includes(core);
+      });
+      pureRemoved.slice(0, 4).forEach((l) => lines.push(`- ${l}`));
+    } else if (sym.status === "removed" && sym.removedLines.length > 0) {
       buildBehaviorSummary(sym.removedLines, "removed").slice(0, 4)
         .forEach((l) => lines.push(`- ${l}`));
     }
