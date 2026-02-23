@@ -72,7 +72,9 @@ owner/repo · `3f8a21c` · JS/TS 3개 파일 변경
 - **useEffect 중복 제거** — added/removed 양쪽에 동일한 `useEffect`가 나오면 `~ useEffect deps 변경` 한 줄로 통합
 - **cross-file 리팩토링 감지** — 같은 PR에서 A파일에서 제거되고 B파일에 추가된 심볼은 `❌ 제거됨` 대신 `📦 → B파일로 이동됨`으로 표시
 - **오탐 방지** — diff의 context 라인에 심볼이 남아있으면 `removed` 대신 `modified`로 재분류
-- **잘린 코드 라인 필터링** — 괄호가 열린 채 끊기거나 연산자로 끝나는 mid-expression 조각은 분석 전에 제거
+- **잘린 코드 라인 필터링** — `)` 로 시작하거나, 괄호 불균형이거나, 연산자로 끝나는 mid-expression 조각은 분석 전에 제거
+- **빈 섹션 숨김** — 감지된 변경 내용이 없는 `변경됨` 심볼은 출력에서 제외
+- **동작 요약 우선순위** — 출력 항목을 신호 유형별로 우선순위 적용: state/API (최대 4개) → guard/catch (최대 2개) → cond (최대 2개) → setState/useEffect/return (최대 2개)
 - **테스트 파일 요약** — `.test.ts` 등 테스트 파일은 코드 분석 대신 `describe`/`it` 블록 이름을 그룹별로 표시
 - **설정 파일 요약** — vitest/jest/vite 설정 파일은 추가·제거된 플러그인 목록만 표시
 - **Gemini AI 요약** (선택) — 코드 라인이 아닌 비즈니스 로직 변화 + 부수 효과 중심 1~2줄 요약 (`> 💡 ...`)

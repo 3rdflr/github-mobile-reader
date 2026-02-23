@@ -71,7 +71,9 @@ owner/repo · `3f8a21c` · JS/TS 3개 파일 변경
 - **useEffect deduplication** — if the same `useEffect` appears in both added and removed sides, shown once as `~ useEffect deps 변경` instead of duplicating
 - **Cross-file refactoring detection** — symbols removed in one file and added in another within the same PR are classified as `📦 moved` rather than `❌ removed`
 - **False-removed prevention** — symbols that still appear in context lines of the diff are reclassified from `removed` to `modified`
-- **Syntactically incomplete line filtering** — mid-expression fragments (unbalanced parentheses, trailing operators) are excluded before analysis
+- **Syntactically incomplete line filtering** — mid-expression fragments (unbalanced parentheses, lines starting with `)`, trailing operators) are excluded before analysis
+- **Empty section suppression** — `modified` symbols with no detectable changes are silently omitted
+- **Behavior summary prioritization** — output lines ranked by signal type: state/API (max 4) → guard/catch (max 2) → cond (max 2) → setState/useEffect/return (max 2)
 - **Test file summaries** — test/spec files show grouped `describe`/`it` block names instead of code analysis
 - **Config file summaries** — vitest/jest/vite config changes show added/removed plugins instead of code analysis
 - **Gemini AI summaries** (optional) — focuses on business logic change and side effects, not raw lines (`> 💡 ...`)
