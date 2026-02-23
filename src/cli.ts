@@ -176,10 +176,8 @@ async function processPR(
   // ── Pass 2: generate per-file sections ────────────────────────────────────
   const sections: string[] = [];
 
-  sections.push(`# 📖 PR #${prNumber} — ${meta.title}\n`);
-  sections.push(`> Repository: ${repo}  `);
-  sections.push(`> Commit: \`${meta.head}\`  `);
-  sections.push(`> 변경된 JS/TS 파일: ${fileDiffs.length}개\n`);
+  sections.push(`# PR #${prNumber} — ${meta.title}\n`);
+  sections.push(`${repo} · \`${meta.head}\` · JS/TS ${fileDiffs.length}개 파일 변경\n`);
   sections.push('---\n');
 
   for (const { filename, diff } of fileDiffs) {
@@ -212,7 +210,7 @@ async function processPR(
       .trimEnd();
 
     if (!body) continue; // 변경 요약이 없으면 파일 섹션 생략
-    sections.push(`## 📄 \`${filename}\`\n`);
+    sections.push(`## \`${filename}\`\n`);
 
     // AI summary (opt-in — only when geminiKey is provided)
     if (geminiKey) {
