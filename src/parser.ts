@@ -99,16 +99,17 @@ export function extractTestCases(addedLines: string[]): TestCase[] {
     const t = line.trim();
 
     // describe('suite name', ...) or describe("suite name", ...)
-    const suiteMatch = t.match(/^describe\s*\(\s*['"`](.+?)['"`]/);
+    // Use backreference \1 so the closing quote matches the opening quote
+    const suiteMatch = t.match(/^describe\s*\(\s*(['"`])(.*?)\1/);
     if (suiteMatch) {
-      currentSuite = suiteMatch[1];
+      currentSuite = suiteMatch[2];
       continue;
     }
 
     // it('test name', ...) or test('test name', ...)
-    const caseMatch = t.match(/^(?:it|test)\s*\(\s*['"`](.+?)['"`]/);
+    const caseMatch = t.match(/^(?:it|test)\s*\(\s*(['"`])(.*?)\1/);
     if (caseMatch) {
-      results.push({ suite: currentSuite, name: caseMatch[1] });
+      results.push({ suite: currentSuite, name: caseMatch[2] });
     }
   }
 
@@ -868,6 +869,11 @@ export function attributeLinesToSymbols(hunks: DiffHunk[]): SymbolDiff[] {
     }
   }
 
+  // Collect all added lines across all symbols — used to detect
+  // "refactor-out" pattern: a symbol appears removed but its name
+  // still appears in other symbols' added context lines.
+  const allAddedLines = [...symbolMap.values()].flatMap((v) => v.added);
+
   const results: SymbolDiff[] = [];
   for (const [name, { added, removed, kind }] of symbolMap) {
     if (added.length === 0 && removed.length === 0) continue;
@@ -880,16 +886,22 @@ export function attributeLinesToSymbols(hunks: DiffHunk[]): SymbolDiff[] {
     const effectiveAdded = added.length > 0;
     const effectiveRemoved = meaningfulRemoved.length > 0;
 
-    results.push({
-      name,
-      kind,
-      status: effectiveAdded && effectiveRemoved ? "modified"
-            : effectiveAdded ? "added"
-            : effectiveRemoved ? "removed"
-            : "modified", // only comment changes → treat as modified (minor)
-      addedLines: added,
-      removedLines: removed,
-    });
+    let status: SymbolDiff["status"] =
+        effectiveAdded && effectiveRemoved ? "modified"
+      : effectiveAdded ? "added"
+      : effectiveRemoved ? "removed"
+      : "modified";
+
+    // Refactor-out detection: symbol appears "removed" but is still referenced
+    // in other added lines (e.g. component body rewritten after helper extraction)
+    if (status === "removed") {
+      const namePattern = new RegExp(`\\b${name}\\b`);
+      if (allAddedLines.some((l) => namePattern.test(l))) {
+        status = "modified";
+      }
+    }
+
+    results.push({ name, kind, status, addedLines: added, removedLines: removed });
   }
 
   return results;
