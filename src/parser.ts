@@ -1222,23 +1222,85 @@ function buildJSXDiffSummary(
 /**
  * Generate per-symbol markdown sections showing before/after changes.
  */
+/**
+ * Build a one-line story summary for a group of symbols sharing the same status.
+ * Rule-based: looks at params, variables, JSX elements, and behavior signals.
+ */
+function buildGroupStorySummary(
+  entries: Array<{ sym: SymbolDiff; setupNames: string[] }>,
+  isJSX: boolean,
+): string {
+  // Collect all detail signals across the group
+  const allParams: string[] = [];
+  const allSetup: string[] = [];
+  const allJSXAdded: string[] = [];
+  const allBehavior: string[] = [];
+
+  for (const { sym, setupNames } of entries) {
+    allSetup.push(...setupNames);
+
+    const paramChanges = extractParamChanges(sym.addedLines, sym.removedLines);
+    allParams.push(...paramChanges.added, ...paramChanges.removed);
+
+    if (isJSX) {
+      const addedTree = parseJSXToFlowTree(sym.addedLines);
+      const removedTree = parseJSXToFlowTree(sym.removedLines);
+      const jsxLines = buildJSXDiffSummary(addedTree, removedTree, sym.addedLines, sym.removedLines);
+      // Extract bare tag names from lines like `+ \`<Suspense>\``
+      jsxLines.forEach((l) => {
+        const m = l.match(/`<(\w+)>`/);
+        if (m) allJSXAdded.push(m[1]);
+      });
+    }
+
+    if (sym.status !== "moved") {
+      const behavior = buildBehaviorSummary(sym.addedLines);
+      allBehavior.push(...behavior);
+    }
+  }
+
+  const parts: string[] = [];
+
+  // JSX: mention wrapping component if present (e.g. Suspense boundary)
+  if (allJSXAdded.length > 0) {
+    const unique = [...new Set(allJSXAdded)].slice(0, 2);
+    parts.push(`${unique.map((t) => `<${t}>`).join(", ")} 사용`);
+  }
+
+  // Variables / setup (cap 3)
+  if (allSetup.length > 0) {
+    const shown = [...new Set(allSetup)].slice(0, 3).join(", ");
+    parts.push(`${shown} 처리`);
+  }
+
+  // Params (cap 2)
+  if (allParams.length > 0 && parts.length < 2) {
+    const shown = [...new Set(allParams)].slice(0, 2).join(", ");
+    parts.push(`${shown} 처리`);
+  }
+
+  // Behavior signals (hook/state/API — cap 1)
+  if (allBehavior.length > 0 && parts.length < 2) {
+    // Strip tier markers like "(state) `x` ← ..." → just the hook name
+    const signal = allBehavior[0]
+      .replace(/^\(state\)\s*`(\w+)`.*$/, "$1 상태")
+      .replace(/^\(API\)\s*`([\w.]+)\(.*$/, "$1 호출")
+      .replace(/^state `(\w+)`.*$/, "$1 상태")
+      .replace(/^`useEffect`.*$/, "useEffect 등록");
+    parts.push(signal);
+  }
+
+  return parts.length > 0 ? parts.join(", ") : "";
+}
+
 export function generateSymbolSections(
   symbolDiffs: SymbolDiff[],
   isJSX: boolean,
 ): string[] {
   const sections: string[] = [];
-  const STATUS_ICON = { added: "✅", removed: "❌", modified: "✏️", moved: "📦" };
-  const getStatusLabel = (sym: SymbolDiff) => {
-    if (sym.status === "moved") {
-      if (sym.movedTo) return `→ \`${sym.movedTo}\`로 이동됨`;
-      if (sym.movedFrom) return `← \`${sym.movedFrom}\`에서 이동됨`;
-      return "다른 파일로 이동됨";
-    }
-    return { added: "새로 추가", removed: "제거됨", modified: "변경됨" }[sym.status];
-  };
 
   // Walk the list in order: attach each setup variable to the nearest
-  // preceding significant symbol so it appears as an inline Context line.
+  // preceding significant symbol so it appears as context.
   type SignificantEntry = {
     sym: SymbolDiff;
     setupNames: string[];
@@ -1253,121 +1315,140 @@ export function generateSymbolSections(
     if (sym.kind === "setup") {
       pendingSetup.push(sym.name);
     } else {
-      // Flush pending setup onto this significant symbol
       entries.push({ sym, setupNames: pendingSetup });
       pendingSetup = [];
     }
   }
-  // Any trailing setup items → attach to last entry or discard if none
   if (pendingSetup.length > 0 && entries.length > 0) {
     entries[entries.length - 1].setupNames.push(...pendingSetup);
   }
 
-  for (const { sym, setupNames } of entries) {
-    const kindLabel = sym.kind === "component" ? "Component" : "Function";
-    // Flat bold line instead of ### heading — keeps font size normal on mobile
-    sections.push(
-      `**${STATUS_ICON[sym.status]} \`${sym.name}\`** _(${kindLabel})_ — ${getStatusLabel(sym)}`,
-    );
+  // Group entries by status
+  const groups: Record<string, SignificantEntry[]> = {
+    added: [],
+    modified: [],
+    removed: [],
+    moved: [],
+  };
+  for (const entry of entries) {
+    groups[entry.sym.status].push(entry);
+  }
 
-    const lines: string[] = [];
+  const GROUP_LABEL: Record<string, string> = {
+    added: "추가",
+    modified: "변경",
+    removed: "제거",
+    moved: "이동",
+  };
 
-    // Setup variables attached to this symbol (cap at 5)
-    if (setupNames.length > 0) {
-      const VAR_CAP = 5;
-      const shown = setupNames.slice(0, VAR_CAP).map((n) => `\`${n}\``).join(", ");
-      const extra = setupNames.length > VAR_CAP ? ` 외 ${setupNames.length - VAR_CAP}개` : "";
-      lines.push(`변수: ${shown}${extra}`);
+  for (const status of ["added", "modified", "removed", "moved"] as const) {
+    const group = groups[status];
+    if (group.length === 0) continue;
+
+    const nameList = group.map((e) => `\`${e.sym.name}\``).join(", ");
+    const story = buildGroupStorySummary(group, isJSX);
+    const header = story
+      ? `${GROUP_LABEL[status]} (${group.length})  ${nameList} — ${story}`
+      : `${GROUP_LABEL[status]} (${group.length})  ${nameList}`;
+
+    sections.push(header);
+
+    // Per-symbol detail lines (indented, only when there's meaningful content)
+    for (const { sym, setupNames } of group) {
+      const lines: string[] = [];
+
+      if (setupNames.length > 0) {
+        const VAR_CAP = 5;
+        const shown = setupNames.slice(0, VAR_CAP).map((n) => `\`${n}\``).join(", ");
+        const extra = setupNames.length > VAR_CAP ? ` 외 ${setupNames.length - VAR_CAP}개` : "";
+        lines.push(`변수: ${shown}${extra}`);
+      }
+
+      const paramChanges = extractParamChanges(sym.addedLines, sym.removedLines);
+      const PARAM_CAP = 4;
+      paramChanges.added.slice(0, PARAM_CAP).forEach((p) => lines.push(`파라미터+ \`${p}\``));
+      if (paramChanges.added.length > PARAM_CAP)
+        lines.push(`파라미터+ … 외 ${paramChanges.added.length - PARAM_CAP}개`);
+      paramChanges.removed.slice(0, PARAM_CAP).forEach((p) => lines.push(`파라미터- \`${p}\``));
+      if (paramChanges.removed.length > PARAM_CAP)
+        lines.push(`파라미터- … 외 ${paramChanges.removed.length - PARAM_CAP}개`);
+
+      const props = extractPropsChanges(sym.addedLines, sym.removedLines);
+      const abbreviateProp = (p: string) =>
+        p.replace(/^(\w[\w?]*:\s*)(['"`])(.{20,})(\2)$/, "$1$2...$2");
+      const PROPS_CAP = 5;
+      props.added.slice(0, PROPS_CAP).forEach((p) => lines.push(`Props+ \`${abbreviateProp(p)}\``));
+      if (props.added.length > PROPS_CAP)
+        lines.push(`Props+ … 외 ${props.added.length - PROPS_CAP}개`);
+      props.removed.slice(0, PROPS_CAP).forEach((p) => lines.push(`Props- \`${abbreviateProp(p)}\``));
+      if (props.removed.length > PROPS_CAP)
+        lines.push(`Props- … 외 ${props.removed.length - PROPS_CAP}개`);
+
+      if (sym.status !== "removed" && sym.status !== "moved") {
+        const addedBehavior = buildBehaviorSummary(sym.addedLines);
+        const removedBehavior = sym.status !== "added" && sym.removedLines.length > 0
+          ? buildBehaviorSummary(sym.removedLines, "removed")
+          : [];
+
+        const deduped = addedBehavior.filter((l) => {
+          const core = l
+            .replace(/^state `(\w+)`.*$/, "state:$1")
+            .replace(/^`useEffect`.*$/, "useEffect");
+          const removedCore = removedBehavior.map((r) =>
+            r.replace(/^state `(\w+)`.*$/, "state:$1")
+             .replace(/^`useEffect`.*$/, "useEffect"),
+          );
+          return !removedCore.includes(core);
+        });
+
+        const changedOnly = removedBehavior.filter((l) => {
+          const core = l
+            .replace(/^state `(\w+)`.*$/, "state:$1")
+            .replace(/^`useEffect`.*$/, "useEffect");
+          const addedCore = addedBehavior.map((a) =>
+            a.replace(/^state `(\w+)`.*$/, "state:$1")
+             .replace(/^`useEffect`.*$/, "useEffect"),
+          );
+          return addedCore.includes(core);
+        });
+
+        deduped.forEach((l) => lines.push(`+ ${l}`));
+        changedOnly.slice(0, 2).forEach((l) => lines.push(`~ ${l.replace(/^state `\w+` 제거$/, "").replace(/^`useEffect`.*$/, "`useEffect` deps 변경")}`));
+
+        const pureRemoved = removedBehavior.filter((l) => {
+          const core = l
+            .replace(/^state `(\w+)`.*$/, "state:$1")
+            .replace(/^`useEffect`.*$/, "useEffect");
+          const addedCore = addedBehavior.map((a) =>
+            a.replace(/^state `(\w+)`.*$/, "state:$1")
+             .replace(/^`useEffect`.*$/, "useEffect"),
+          );
+          return !addedCore.includes(core);
+        });
+        pureRemoved.slice(0, 4).forEach((l) => lines.push(`- ${l}`));
+      } else if (sym.status === "removed" && sym.removedLines.length > 0) {
+        buildBehaviorSummary(sym.removedLines, "removed").slice(0, 4)
+          .forEach((l) => lines.push(`- ${l}`));
+      }
+
+      if (isJSX) {
+        const addedTree = parseJSXToFlowTree(sym.addedLines);
+        const removedTree = parseJSXToFlowTree(sym.removedLines);
+        buildJSXDiffSummary(addedTree, removedTree, sym.addedLines, sym.removedLines)
+          .forEach((l) => lines.push(`UI: ${l.replace(/^[+-]\s*/, "")}`));
+      }
+
+      if (lines.length === 0 && sym.status === "modified") continue;
+
+      // Only show per-symbol detail when there's more than one symbol in the group
+      // OR when detail lines add something beyond the group story
+      if (group.length > 1 && lines.length > 0) {
+        lines.forEach((l) => sections.push(`  ${sym.name}: ${l}`));
+      } else if (group.length === 1 && lines.length > 0) {
+        lines.forEach((l) => sections.push(`  ${l}`));
+      }
     }
 
-    // Function parameter changes (cap at 4, summarise rest)
-    const paramChanges = extractParamChanges(sym.addedLines, sym.removedLines);
-    const PARAM_CAP = 4;
-    paramChanges.added.slice(0, PARAM_CAP).forEach((p) => lines.push(`파라미터+ \`${p}\``));
-    if (paramChanges.added.length > PARAM_CAP)
-      lines.push(`파라미터+ … 외 ${paramChanges.added.length - PARAM_CAP}개`);
-    paramChanges.removed.slice(0, PARAM_CAP).forEach((p) => lines.push(`파라미터- \`${p}\``));
-    if (paramChanges.removed.length > PARAM_CAP)
-      lines.push(`파라미터- … 외 ${paramChanges.removed.length - PARAM_CAP}개`);
-
-    // Props / interface changes (cap at 5, summarise rest)
-    const props = extractPropsChanges(sym.addedLines, sym.removedLines);
-    const abbreviateProp = (p: string) =>
-      p.replace(/^(\w[\w?]*:\s*)(['"`])(.{20,})(\2)$/, "$1$2...$2");
-    const PROPS_CAP = 5;
-    props.added.slice(0, PROPS_CAP).forEach((p) => lines.push(`Props+ \`${abbreviateProp(p)}\``));
-    if (props.added.length > PROPS_CAP)
-      lines.push(`Props+ … 외 ${props.added.length - PROPS_CAP}개`);
-    props.removed.slice(0, PROPS_CAP).forEach((p) => lines.push(`Props- \`${abbreviateProp(p)}\``));
-    if (props.removed.length > PROPS_CAP)
-      lines.push(`Props- … 외 ${props.removed.length - PROPS_CAP}개`);
-
-    // Behavioral summary (skip for moved — content lives in the destination file)
-    if (sym.status !== "removed" && sym.status !== "moved") {
-      const addedBehavior = buildBehaviorSummary(sym.addedLines);
-      const removedBehavior = sym.status !== "added" && sym.removedLines.length > 0
-        ? buildBehaviorSummary(sym.removedLines, "removed")
-        : [];
-
-      // Deduplicate: if the same signal appears in both added and removed,
-      // it means it was modified (e.g. useEffect deps changed) — show once as changed
-      const deduped = addedBehavior.filter((l) => {
-        // Strip leading markers to get the core signal for comparison
-        const core = l
-          .replace(/^state `(\w+)`.*$/, "state:$1")
-          .replace(/^`useEffect`.*$/, "useEffect");
-        const removedCore = removedBehavior.map((r) =>
-          r.replace(/^state `(\w+)`.*$/, "state:$1")
-           .replace(/^`useEffect`.*$/, "useEffect"),
-        );
-        return !removedCore.includes(core);
-      });
-
-      // Items that exist in removed but not added → changed (show as modified)
-      const changedOnly = removedBehavior.filter((l) => {
-        const core = l
-          .replace(/^state `(\w+)`.*$/, "state:$1")
-          .replace(/^`useEffect`.*$/, "useEffect");
-        const addedCore = addedBehavior.map((a) =>
-          a.replace(/^state `(\w+)`.*$/, "state:$1")
-           .replace(/^`useEffect`.*$/, "useEffect"),
-        );
-        return addedCore.includes(core);
-      });
-
-      deduped.forEach((l) => lines.push(`+ ${l}`));
-      // Show "changed" items (in both sides) without +/- prefix
-      changedOnly.slice(0, 2).forEach((l) => lines.push(`~ ${l.replace(/^state `\w+` 제거$/, "").replace(/^`useEffect`.*$/, "`useEffect` deps 변경")}`));
-
-      // Purely removed signals (not in added)
-      const pureRemoved = removedBehavior.filter((l) => {
-        const core = l
-          .replace(/^state `(\w+)`.*$/, "state:$1")
-          .replace(/^`useEffect`.*$/, "useEffect");
-        const addedCore = addedBehavior.map((a) =>
-          a.replace(/^state `(\w+)`.*$/, "state:$1")
-           .replace(/^`useEffect`.*$/, "useEffect"),
-        );
-        return !addedCore.includes(core);
-      });
-      pureRemoved.slice(0, 4).forEach((l) => lines.push(`- ${l}`));
-    } else if (sym.status === "removed" && sym.removedLines.length > 0) {
-      buildBehaviorSummary(sym.removedLines, "removed").slice(0, 4)
-        .forEach((l) => lines.push(`- ${l}`));
-    }
-
-    // JSX element diff
-    if (isJSX) {
-      const addedTree = parseJSXToFlowTree(sym.addedLines);
-      const removedTree = parseJSXToFlowTree(sym.removedLines);
-      buildJSXDiffSummary(addedTree, removedTree, sym.addedLines, sym.removedLines)
-        .forEach((l) => lines.push(`UI: ${l.replace(/^[+-]\s*/, "")}`));
-    }
-
-    // Skip symbols with no meaningful content (e.g. only context lines with no added/removed analysis)
-    if (lines.length === 0 && sym.status === "modified") continue;
-
-    lines.forEach((l) => sections.push(`  ${l}`));
     sections.push("");
   }
 
@@ -1482,7 +1563,7 @@ export function generateReaderMarkdown(
     sections.push(...generateTestFileSummary(added, removed));
     sections.push("---");
     sections.push(
-      "🛠 Auto-generated by [github-mobile-reader](https://github.com/3rdflr/github-mobile-reader). Do not edit manually.",
+      "Auto-generated by [github-mobile-reader](https://github.com/3rdflr/github-mobile-reader). Do not edit manually.",
     );
     return sections.join("\n");
   }
@@ -1506,7 +1587,7 @@ export function generateReaderMarkdown(
     }
     sections.push("---");
     sections.push(
-      "🛠 Auto-generated by [github-mobile-reader](https://github.com/3rdflr/github-mobile-reader). Do not edit manually.",
+      "Auto-generated by [github-mobile-reader](https://github.com/3rdflr/github-mobile-reader). Do not edit manually.",
     );
     return sections.join("\n");
   }
@@ -1548,14 +1629,6 @@ export function generateReaderMarkdown(
 
   const sections: string[] = [];
 
-  // ── File-level import changes ─────────────────────────────
-  if (fileImportChanges.added.length > 0 || fileImportChanges.removed.length > 0) {
-    sections.push("**Import 변화**");
-    fileImportChanges.added.forEach((i) => sections.push(`+ \`${i}\``));
-    fileImportChanges.removed.forEach((i) => sections.push(`- \`${i}\` (제거됨)`));
-    sections.push("");
-  }
-
   // ── Per-symbol sections ───────────────────────────────────
   if (symbolDiffs.length > 0) {
     sections.push(...generateSymbolSections(symbolDiffs, isJSX));
@@ -1570,10 +1643,21 @@ export function generateReaderMarkdown(
     }
   }
 
+  // ── File-level import changes (compressed, after symbols) ─
+  if (fileImportChanges.added.length > 0 || fileImportChanges.removed.length > 0) {
+    const parts: string[] = [];
+    if (fileImportChanges.added.length > 0)
+      parts.push(`+${fileImportChanges.added.map((i) => `\`${i}\``).join(", ")}`);
+    if (fileImportChanges.removed.length > 0)
+      parts.push(`-${fileImportChanges.removed.map((i) => `\`${i}\``).join(", ")}`);
+    sections.push(`Import: ${parts.join("  ")}`);
+    sections.push("");
+  }
+
   // ── Footer ───────────────────────────────────────────────
   sections.push("---");
   sections.push(
-    "🛠 Auto-generated by [github-mobile-reader](https://github.com/3rdflr/github-mobile-reader). Do not edit manually.",
+    "Auto-generated by [github-mobile-reader](https://github.com/3rdflr/github-mobile-reader). Do not edit manually.",
   );
 
   return sections.join("\n");

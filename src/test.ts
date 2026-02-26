@@ -349,9 +349,9 @@ diff --git a/src/user.ts b/src/user.ts
 const mdSym = generateReaderMarkdown(SYMBOL_DIFF, { file: 'src/user.ts' });
 
 assert(
-  'detects newly added function with ✅',
-  mdSym.includes('✅') && mdSym.includes('fetchUser'),
-  `expected ✅ fetchUser in output: "${mdSym.slice(0, 200)}"`
+  'detects newly added function',
+  mdSym.includes('추가') && mdSym.includes('fetchUser'),
+  `expected 추가 + fetchUser in output: "${mdSym.slice(0, 200)}"`
 );
 assert(
   'detects async call in behavior',
