@@ -1220,6 +1220,42 @@ function buildJSXDiffSummary(
 }
 
 /**
+ * Render a diff snippet block for a symbol's before/after lines.
+ * Filters noise (blank lines, pure brackets, className-only lines, import lines).
+ * Returns markdown lines including ```diff fences, or null if nothing meaningful.
+ */
+function renderDiffSnippet(removed: string[], added: string[], maxLines = 8): string[] | null {
+  const isNoise = (line: string) => {
+    const t = line.trim();
+    return (
+      t.length === 0 ||
+      /^[(){}\[\];,]$/.test(t) ||
+      /^className=/.test(t) ||
+      /^import\s/.test(t)
+    );
+  };
+
+  const filteredRemoved = removed.filter((l) => !isNoise(l));
+  const filteredAdded = added.filter((l) => !isNoise(l));
+
+  if (filteredRemoved.length === 0 && filteredAdded.length === 0) return null;
+
+  const lines: string[] = ["```diff"];
+
+  const appendLines = (arr: string[], prefix: string) => {
+    const shown = arr.slice(0, maxLines);
+    shown.forEach((l) => lines.push(`${prefix}${l.trimEnd()}`));
+    if (arr.length > maxLines) lines.push(`${prefix}... (+${arr.length - maxLines} lines)`);
+  };
+
+  appendLines(filteredRemoved, "- ");
+  appendLines(filteredAdded, "+ ");
+
+  lines.push("```");
+  return lines;
+}
+
+/**
  * Generate per-symbol markdown sections showing before/after changes.
  */
 /**
@@ -1437,6 +1473,10 @@ export function generateSymbolSections(
         buildJSXDiffSummary(addedTree, removedTree, sym.addedLines, sym.removedLines)
           .forEach((l) => lines.push(`UI: ${l.replace(/^[+-]\s*/, "")}`));
       }
+
+      // Append diff snippet (before/after code block)
+      const snippet = renderDiffSnippet(sym.removedLines, sym.addedLines);
+      if (snippet) snippet.forEach((l) => lines.push(l));
 
       if (lines.length === 0 && sym.status === "modified") continue;
 
