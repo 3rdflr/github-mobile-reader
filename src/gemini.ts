@@ -8,30 +8,31 @@ const GEMINI_URL =
   'https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash-lite:generateContent';
 
 const MAX_DIFF_LINES = 150;
+const MAX_REMOVED_LINES = 60;
 const TIMEOUT_MS = 10_000;
 
 function buildPrompt(filename: string, addedLines: string[], removedLines: string[]): string {
   const added = addedLines.slice(0, MAX_DIFF_LINES).join('\n');
-  const removed = removedLines.slice(0, 40).join('\n');
+  const removed = removedLines.slice(0, MAX_REMOVED_LINES).join('\n');
 
   const removedBlock = removed.length > 0
-    ? `\n제거된 코드:\n\`\`\`\n${removed}\n\`\`\`\n`
+    ? `\n변경 전 코드 (제거됨):\n\`\`\`\n${removed}\n\`\`\`\n`
     : '';
 
   return `너는 시니어 개발자야. 아래는 "${filename}" 파일의 PR diff야.
 
-추가된 코드:
+변경 후 코드 (추가됨):
 \`\`\`
 ${added}
 \`\`\`
 ${removedBlock}
-모바일에서 PR을 빠르게 리뷰하는 개발자를 위해 한국어로 1~2줄로 요약해.
+모바일에서 PR을 빠르게 리뷰하는 개발자를 위해 한국어로 2~3줄로 요약해.
 
 규칙:
-- 코드 라인이 아니라 **비즈니스 로직의 변화**를 서술해
+- **변경 전 동작과 변경 후 동작을 명확히 대비**시켜 서술해 (예: "기존엔 X였지만 이제 Y로 변경됨")
+- 버그 수정이라면 기존 코드의 어떤 특성이 문제를 일으켰는지, 어떻게 해결했는지 포함해
 - API 호출, 상태 변경, UI 피드백(confirm/alert), 에러 처리 같은 부수 효과가 있으면 반드시 포함해
-- 변경 전후의 동작 차이를 명확히 해 (예: "기존엔 X였지만 이제 Y를 추가로 수행")
-- 기술 용어(함수명, API 경로)는 그대로 사용
+- 기술 용어(함수명, 속성명, API 경로)는 그대로 사용
 - 파일명 반복 금지. 요약 문장만 출력해.`;
 }
 

@@ -32,6 +32,22 @@ function run(cmd: string, cwd?: string): string {
   }).trim();
 }
 
+// ── Per-file commit history ───────────────────────────────────────────────────
+
+/**
+ * Returns commit messages (short hash + subject) that touched a specific file
+ * within the PR range. At most 5 entries.
+ */
+function getCommitMessagesForFile(filename: string, baseBranch: string): string[] {
+  try {
+    const log = run(`git log origin/${baseBranch}...HEAD --oneline -- "${filename}"`);
+    if (!log) return [];
+    return log.split('\n').filter(Boolean).slice(0, 5);
+  } catch {
+    return [];
+  }
+}
+
 // ── Per-file diff extraction ──────────────────────────────────────────────────
 
 interface FileDiff {
@@ -80,6 +96,7 @@ async function writeMarkdown(
   fileDiffs: FileDiff[],
   meta: { repo: string; commit: string },
   geminiKey?: string,
+  baseBranch = 'main',
 ): Promise<string> {
   const parts: string[] = [
     `# PR #${prNumber} — Mobile Reader View\n`,
@@ -98,6 +115,13 @@ async function writeMarkdown(
     });
 
     parts.push(`## \`${filename}\`\n`);
+
+    // Commits that touched this file in the PR
+    const commits = getCommitMessagesForFile(filename, baseBranch);
+    if (commits.length > 0) {
+      commits.forEach((c) => parts.push(`> ${c}`));
+      parts.push('');
+    }
 
     // AI summary (opt-in — only when GEMINI_API_KEY is set)
     if (geminiKey) {
@@ -172,7 +196,7 @@ async function main(): Promise<void> {
   const fileDiffs = getFileDiffs(baseBranch);
   console.log(`[github-mobile-reader] Found ${fileDiffs.length} JS/TS file(s) with changes`);
 
-  const outPath = await writeMarkdown(outputDir, prNumber, fileDiffs, { repo, commit }, geminiKey);
+  const outPath = await writeMarkdown(outputDir, prNumber, fileDiffs, { repo, commit }, geminiKey, baseBranch);
 
   // Build a short summary for the PR comment
   const fileList = fileDiffs.map(f => `- \`${f.filename}\``).join('\n') || '- (none)';
