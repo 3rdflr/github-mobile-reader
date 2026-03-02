@@ -1230,15 +1230,35 @@ function renderDiffSnippet(removed: string[], added: string[], maxLines = 8): st
     return (
       t.length === 0 ||
       /^[(){}\[\];,]$/.test(t) ||
-      /^className=/.test(t) ||
-      /^import\s/.test(t)
+      /^import\s/.test(t) ||
+      /^\{?\/\*/.test(t) ||   // JSX/block comments: {/* ... */} or /* ... */
+      /^\/\//.test(t)          // line comments: // ...
     );
   };
 
-  const filteredRemoved = removed.filter((l) => !isNoise(l));
-  const filteredAdded = added.filter((l) => !isNoise(l));
+  // className lines are handled separately — extract changed class tokens
+  const isClassNameLine = (line: string) => /className=['"`{]/.test(line);
+  const extractClasses = (line: string): string[] => {
+    const m = line.match(/className=['"`]([^'"`]+)['"`]/);
+    if (!m) return [];
+    return m[1].split(/\s+/).filter(Boolean);
+  };
 
-  if (filteredRemoved.length === 0 && filteredAdded.length === 0) return null;
+  const filteredRemoved = removed.filter((l) => !isNoise(l) && !isClassNameLine(l));
+  const filteredAdded = added.filter((l) => !isNoise(l) && !isClassNameLine(l));
+
+  // Class diff: tokens added or removed
+  const removedClassLines = removed.filter(isClassNameLine);
+  const addedClassLines = added.filter(isClassNameLine);
+  const removedClasses = new Set(removedClassLines.flatMap(extractClasses));
+  const addedClasses = new Set(addedClassLines.flatMap(extractClasses));
+  const classRemoved = [...removedClasses].filter((c) => !addedClasses.has(c));
+  const classAdded = [...addedClasses].filter((c) => !removedClasses.has(c));
+
+  const hasCodeDiff = filteredRemoved.length > 0 || filteredAdded.length > 0;
+  const hasClassDiff = classRemoved.length > 0 || classAdded.length > 0;
+
+  if (!hasCodeDiff && !hasClassDiff) return null;
 
   const lines: string[] = ["```diff"];
 
@@ -1250,6 +1270,10 @@ function renderDiffSnippet(removed: string[], added: string[], maxLines = 8): st
 
   appendLines(filteredRemoved, "- ");
   appendLines(filteredAdded, "+ ");
+
+  // Append class token diff as compact lines
+  classRemoved.forEach((c) => lines.push(`- .${c}`));
+  classAdded.forEach((c) => lines.push(`+ .${c}`));
 
   lines.push("```");
   return lines;
