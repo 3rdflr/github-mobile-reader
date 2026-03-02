@@ -1303,27 +1303,21 @@ function buildGroupStorySummary(
     parts.push(`${unique.map((t) => `<${t}>`).join(", ")} 사용`);
   }
 
-  // Variables / setup (cap 3)
-  if (allSetup.length > 0) {
-    const shown = [...new Set(allSetup)].slice(0, 3).join(", ");
-    parts.push(`${shown} 처리`);
-  }
-
-  // Params (cap 2)
-  if (allParams.length > 0 && parts.length < 2) {
-    const shown = [...new Set(allParams)].slice(0, 2).join(", ");
-    parts.push(`${shown} 처리`);
-  }
-
-  // Behavior signals (hook/state/API — cap 1)
-  if (allBehavior.length > 0 && parts.length < 2) {
-    // Strip tier markers like "(state) `x` ← ..." → just the hook name
-    const signal = allBehavior[0]
+  // Behavior signals first (most meaningful) — API/state/hook/effect
+  const behaviorSignals = [...new Set(allBehavior)].slice(0, 2).map((signal) =>
+    signal
+      .replace(/^\(state\)\s*`(\w+)`\s*←\s*`([\w.]+)\(.*$/, "$2 → $1")
       .replace(/^\(state\)\s*`(\w+)`.*$/, "$1 상태")
       .replace(/^\(API\)\s*`([\w.]+)\(.*$/, "$1 호출")
       .replace(/^state `(\w+)`.*$/, "$1 상태")
-      .replace(/^`useEffect`.*$/, "useEffect 등록");
-    parts.push(signal);
+      .replace(/^`useEffect`.*$/, "useEffect 등록")
+  );
+  behaviorSignals.forEach((s) => parts.push(s));
+
+  // Params only if no behavior signal yet
+  if (allParams.length > 0 && parts.length === 0) {
+    const shown = [...new Set(allParams)].slice(0, 2).join(", ");
+    parts.push(`${shown} 파라미터 추가`);
   }
 
   return parts.length > 0 ? parts.join(", ") : "";
@@ -1393,32 +1387,33 @@ export function generateSymbolSections(
     for (const { sym, setupNames } of group) {
       const lines: string[] = [];
 
-      if (setupNames.length > 0) {
-        const VAR_CAP = 5;
-        const shown = setupNames.slice(0, VAR_CAP).map((n) => `\`${n}\``).join(", ");
-        const extra = setupNames.length > VAR_CAP ? ` 외 ${setupNames.length - VAR_CAP}개` : "";
-        lines.push(`변수: ${shown}${extra}`);
-      }
-
       const paramChanges = extractParamChanges(sym.addedLines, sym.removedLines);
       const PARAM_CAP = 4;
-      paramChanges.added.slice(0, PARAM_CAP).forEach((p) => lines.push(`파라미터+ \`${p}\``));
-      if (paramChanges.added.length > PARAM_CAP)
-        lines.push(`파라미터+ … 외 ${paramChanges.added.length - PARAM_CAP}개`);
-      paramChanges.removed.slice(0, PARAM_CAP).forEach((p) => lines.push(`파라미터- \`${p}\``));
-      if (paramChanges.removed.length > PARAM_CAP)
-        lines.push(`파라미터- … 외 ${paramChanges.removed.length - PARAM_CAP}개`);
+      if (paramChanges.added.length > 0) {
+        const shown = paramChanges.added.slice(0, PARAM_CAP).map((p) => `\`${p}\``).join(", ");
+        const extra = paramChanges.added.length > PARAM_CAP ? ` 외 ${paramChanges.added.length - PARAM_CAP}개` : "";
+        lines.push(`파라미터 추가: ${shown}${extra}`);
+      }
+      if (paramChanges.removed.length > 0) {
+        const shown = paramChanges.removed.slice(0, PARAM_CAP).map((p) => `\`${p}\``).join(", ");
+        const extra = paramChanges.removed.length > PARAM_CAP ? ` 외 ${paramChanges.removed.length - PARAM_CAP}개` : "";
+        lines.push(`파라미터 제거: ${shown}${extra}`);
+      }
 
       const props = extractPropsChanges(sym.addedLines, sym.removedLines);
       const abbreviateProp = (p: string) =>
         p.replace(/^(\w[\w?]*:\s*)(['"`])(.{20,})(\2)$/, "$1$2...$2");
       const PROPS_CAP = 5;
-      props.added.slice(0, PROPS_CAP).forEach((p) => lines.push(`Props+ \`${abbreviateProp(p)}\``));
-      if (props.added.length > PROPS_CAP)
-        lines.push(`Props+ … 외 ${props.added.length - PROPS_CAP}개`);
-      props.removed.slice(0, PROPS_CAP).forEach((p) => lines.push(`Props- \`${abbreviateProp(p)}\``));
-      if (props.removed.length > PROPS_CAP)
-        lines.push(`Props- … 외 ${props.removed.length - PROPS_CAP}개`);
+      if (props.added.length > 0) {
+        const shown = props.added.slice(0, PROPS_CAP).map((p) => `\`${abbreviateProp(p)}\``).join(", ");
+        const extra = props.added.length > PROPS_CAP ? ` 외 ${props.added.length - PROPS_CAP}개` : "";
+        lines.push(`Props 추가: ${shown}${extra}`);
+      }
+      if (props.removed.length > 0) {
+        const shown = props.removed.slice(0, PROPS_CAP).map((p) => `\`${abbreviateProp(p)}\``).join(", ");
+        const extra = props.removed.length > PROPS_CAP ? ` 외 ${props.removed.length - PROPS_CAP}개` : "";
+        lines.push(`Props 제거: ${shown}${extra}`);
+      }
 
       if (sym.status !== "removed" && sym.status !== "moved") {
         const addedBehavior = buildBehaviorSummary(sym.addedLines);
@@ -1448,9 +1443,6 @@ export function generateSymbolSections(
           return addedCore.includes(core);
         });
 
-        deduped.forEach((l) => lines.push(`+ ${l}`));
-        changedOnly.slice(0, 2).forEach((l) => lines.push(`~ ${l.replace(/^state `\w+` 제거$/, "").replace(/^`useEffect`.*$/, "`useEffect` deps 변경")}`));
-
         const pureRemoved = removedBehavior.filter((l) => {
           const core = l
             .replace(/^state `(\w+)`.*$/, "state:$1")
@@ -1461,17 +1453,28 @@ export function generateSymbolSections(
           );
           return !addedCore.includes(core);
         });
-        pureRemoved.slice(0, 4).forEach((l) => lines.push(`- ${l}`));
+
+        // Render as As-Is / To-Be when both sides have signals
+        if (pureRemoved.length > 0 && deduped.length > 0) {
+          lines.push(`As-Is: ${pureRemoved.slice(0, 2).join(", ")}`);
+          lines.push(`To-Be: ${deduped.slice(0, 2).join(", ")}`);
+        } else {
+          deduped.forEach((l) => lines.push(`To-Be: ${l}`));
+          pureRemoved.slice(0, 2).forEach((l) => lines.push(`제거: ${l}`));
+        }
       } else if (sym.status === "removed" && sym.removedLines.length > 0) {
         buildBehaviorSummary(sym.removedLines, "removed").slice(0, 4)
-          .forEach((l) => lines.push(`- ${l}`));
+          .forEach((l) => lines.push(`제거: ${l}`));
       }
 
       if (isJSX) {
         const addedTree = parseJSXToFlowTree(sym.addedLines);
         const removedTree = parseJSXToFlowTree(sym.removedLines);
-        buildJSXDiffSummary(addedTree, removedTree, sym.addedLines, sym.removedLines)
-          .forEach((l) => lines.push(`UI: ${l.replace(/^[+-]\s*/, "")}`));
+        const jsxLines = buildJSXDiffSummary(addedTree, removedTree, sym.addedLines, sym.removedLines);
+        const jsxAdded = jsxLines.filter((l) => l.startsWith("+")).map((l) => l.replace(/^\+\s*/, ""));
+        const jsxRemoved = jsxLines.filter((l) => l.startsWith("-")).map((l) => l.replace(/^-\s*/, "").replace(/ 제거$/, ""));
+        if (jsxAdded.length > 0) lines.push(`UI 추가: ${jsxAdded.slice(0, 3).join(", ")}`);
+        if (jsxRemoved.length > 0) lines.push(`UI 제거: ${jsxRemoved.slice(0, 2).join(", ")}`);
       }
 
       // Append diff snippet (before/after code block)
