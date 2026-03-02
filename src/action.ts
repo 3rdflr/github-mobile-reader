@@ -127,8 +127,9 @@ async function writeMarkdown(
     if (geminiKey) {
       const summary = await summarizeWithGemini(filename, diff, geminiKey);
       if (summary) {
-        const lines = summary.split('\n').filter(l => l.trim());
-        const quoted = lines.map((l, i) => i === 0 ? `> ${l}` : `> ${l}`).join('\n');
+        const quoted = summary.split('\n')
+          .map(l => l.trim() ? `> ${l.trim()}` : `>`)
+          .join('\n');
         parts.push(quoted + '\n');
       }
     }

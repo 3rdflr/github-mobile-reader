@@ -1395,20 +1395,27 @@ export function generateSymbolSections(
     moved: "이동",
   };
 
+  // Build <details> summary line: "N개 함수 수정 — `sym1`, `sym2` 외 M개"
+  const SYMBOL_CAP = 5;
+  const allSymNames = entries.map((e) => e.sym.name);
+  const shownNames = allSymNames.slice(0, SYMBOL_CAP).map((n) => `\`${n}\``).join(", ");
+  const extraCount = allSymNames.length > SYMBOL_CAP ? ` 외 ${allSymNames.length - SYMBOL_CAP}개` : "";
+
+  // Determine dominant action label for summary
+  const statusCounts = { added: groups.added.length, modified: groups.modified.length, removed: groups.removed.length, moved: groups.moved.length };
+  const dominantStatus = (["added", "modified", "removed", "moved"] as const).reduce((a, b) => statusCounts[a] >= statusCounts[b] ? a : b);
+  const totalCount = entries.length;
+  const summaryLabel = `${totalCount}개 함수 ${GROUP_LABEL[dominantStatus]} — ${shownNames}${extraCount}`;
+
+  // Collect all detail lines into innerLines
+  const innerLines: string[] = [];
+
   for (const status of ["added", "modified", "removed", "moved"] as const) {
     const group = groups[status];
     if (group.length === 0) continue;
 
-    const nameList = group.map((e) => `\`${e.sym.name}\``).join(", ");
-    const story = buildGroupStorySummary(group, isJSX);
-    const header = story
-      ? `${GROUP_LABEL[status]} (${group.length})  ${nameList} — ${story}`
-      : `${GROUP_LABEL[status]} (${group.length})  ${nameList}`;
-
-    sections.push(header);
-
-    // Per-symbol detail lines (indented, only when there's meaningful content)
-    for (const { sym, setupNames } of group) {
+    // Per-symbol detail lines
+    for (const { sym } of group) {
       const lines: string[] = [];
 
       const paramChanges = extractParamChanges(sym.addedLines, sym.removedLines);
@@ -1456,17 +1463,6 @@ export function generateSymbolSections(
           return !removedCore.includes(core);
         });
 
-        const changedOnly = removedBehavior.filter((l) => {
-          const core = l
-            .replace(/^state `(\w+)`.*$/, "state:$1")
-            .replace(/^`useEffect`.*$/, "useEffect");
-          const addedCore = addedBehavior.map((a) =>
-            a.replace(/^state `(\w+)`.*$/, "state:$1")
-             .replace(/^`useEffect`.*$/, "useEffect"),
-          );
-          return addedCore.includes(core);
-        });
-
         const pureRemoved = removedBehavior.filter((l) => {
           const core = l
             .replace(/^state `(\w+)`.*$/, "state:$1")
@@ -1478,7 +1474,6 @@ export function generateSymbolSections(
           return !addedCore.includes(core);
         });
 
-        // Render as As-Is / To-Be when both sides have signals
         if (pureRemoved.length > 0 && deduped.length > 0) {
           lines.push(`As-Is: ${pureRemoved.slice(0, 2).join(", ")}`);
           lines.push(`To-Be: ${deduped.slice(0, 2).join(", ")}`);
@@ -1507,17 +1502,18 @@ export function generateSymbolSections(
 
       if (lines.length === 0 && sym.status === "modified") continue;
 
-      // Only show per-symbol detail when there's more than one symbol in the group
-      // OR when detail lines add something beyond the group story
-      if (group.length > 1 && lines.length > 0) {
-        lines.forEach((l) => sections.push(`  ${sym.name}: ${l}`));
-      } else if (group.length === 1 && lines.length > 0) {
-        lines.forEach((l) => sections.push(`  ${l}`));
-      }
+      innerLines.push(`**${GROUP_LABEL[status]}**: \`${sym.name}\``);
+      lines.forEach((l) => innerLines.push(`  ${l}`));
+      innerLines.push("");
     }
-
-    sections.push("");
   }
+
+  // Wrap everything in <details>/<summary>
+  sections.push(`<details>`);
+  sections.push(`<summary>${summaryLabel}</summary>`);
+  sections.push("");
+  innerLines.forEach((l) => sections.push(l));
+  sections.push("</details>");
 
   return sections;
 }
