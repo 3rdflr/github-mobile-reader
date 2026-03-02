@@ -7,35 +7,61 @@
 const GEMINI_URL =
   'https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash-lite:generateContent';
 
-const MAX_DIFF_LINES = 150;
+const MAX_DIFF_LINES = 120;
 const MAX_REMOVED_LINES = 60;
 const TIMEOUT_MS = 10_000;
 
+/**
+ * Remove noise lines before sending to Gemini.
+ * Keeps only lines with logic: state changes, conditions, API calls, returns.
+ * Drops: className/style props, pure comments, import/export, blank lines.
+ */
+function filterForGemini(lines: string[]): string[] {
+  return lines.filter((l) => {
+    const t = l.trim();
+    if (t.length === 0) return false;
+    if (/^\/\//.test(t) || /^\{?\/\*/.test(t)) return false;
+    if (/^import\s/.test(t) || /^export\s+(default\s+)?type\s/.test(t)) return false;
+    if (/className=['"`]/.test(t) && !/useState|useEffect|fetch|return|if |=/.test(t)) return false;
+    if (/^style=/.test(t)) return false;
+    return true;
+  });
+}
+
 function buildPrompt(filename: string, addedLines: string[], removedLines: string[]): string {
-  const added = addedLines.slice(0, MAX_DIFF_LINES).join('\n');
-  const removed = removedLines.slice(0, MAX_REMOVED_LINES).join('\n');
+  const added = filterForGemini(addedLines).slice(0, MAX_DIFF_LINES).join('\n');
+  const removed = filterForGemini(removedLines).slice(0, MAX_REMOVED_LINES).join('\n');
 
   const removedBlock = removed.length > 0
-    ? `\n변경 전 코드 (제거됨):\n\`\`\`\n${removed}\n\`\`\`\n`
+    ? `\n변경 전 코드:\n\`\`\`typescript\n${removed}\n\`\`\`\n`
     : '';
 
-  return `너는 시니어 개발자야. 아래는 "${filename}" 파일의 PR diff야.
+  return `너는 GitHub PR 코드 리뷰 전문가야. 아래는 "${filename}" 파일의 핵심 변경 코드야.
 
-변경 후 코드 (추가됨):
-\`\`\`
+변경 후 코드:
+\`\`\`typescript
 ${added}
 \`\`\`
 ${removedBlock}
 모바일에서 PR을 빠르게 리뷰하는 개발자를 위해 아래 형식으로 한국어로 작성해.
 
 출력 형식 (반드시 이 구조를 따를 것):
-**변경 의도**: (한 줄. 이 변경이 왜 필요했는지, 어떤 문제/목적인지)
-**As-Is**: (기존 동작을 동사 중심으로 1~2줄. 버그라면 어떤 특성이 문제였는지 포함)
-**To-Be**: (변경 후 동작을 동사 중심으로 1~2줄. 새로 생긴 이득이나 해결점 포함)
+**변경 의도**: (한 줄. 이 변경이 왜 필요했는지)
+
+**As-Is**:
+\`\`\`typescript
+// 핵심 로직만, 최대 3줄. 불필요한 코드는 ... 으로 생략
+\`\`\`
+
+**To-Be**:
+\`\`\`typescript
+// 핵심 로직만, 최대 3줄. 변경된 이유를 짧은 주석으로 포함
+\`\`\`
 
 규칙:
-- 코드를 출력하지 말 것. 논리 흐름과 동작 변화만 서술
-- 기술 용어(함수명, 속성명, API 경로)는 그대로 사용
+- 코드 블록에는 핵심 상태 변경, 조건문, API 호출만 남길 것
+- className/style/import 등 스타일·설정 코드는 절대 포함하지 말 것
+- 가로가 긴 줄은 줄여서 표현할 것 (모바일 화면 너비 고려)
 - 파일명 반복 금지
 - 항목 레이블(**변경 의도**, **As-Is**, **To-Be**)은 반드시 포함할 것`;
 }
