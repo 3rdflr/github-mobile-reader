@@ -26,14 +26,18 @@ function buildPrompt(filename: string, addedLines: string[], removedLines: strin
 ${added}
 \`\`\`
 ${removedBlock}
-모바일에서 PR을 빠르게 리뷰하는 개발자를 위해 한국어로 2~3줄로 요약해.
+모바일에서 PR을 빠르게 리뷰하는 개발자를 위해 아래 형식으로 한국어로 작성해.
+
+출력 형식 (반드시 이 구조를 따를 것):
+**변경 의도**: (한 줄. 이 변경이 왜 필요했는지, 어떤 문제/목적인지)
+**As-Is**: (기존 동작을 동사 중심으로 1~2줄. 버그라면 어떤 특성이 문제였는지 포함)
+**To-Be**: (변경 후 동작을 동사 중심으로 1~2줄. 새로 생긴 이득이나 해결점 포함)
 
 규칙:
-- **변경 전 동작과 변경 후 동작을 명확히 대비**시켜 서술해 (예: "기존엔 X였지만 이제 Y로 변경됨")
-- 버그 수정이라면 기존 코드의 어떤 특성이 문제를 일으켰는지, 어떻게 해결했는지 포함해
-- API 호출, 상태 변경, UI 피드백(confirm/alert), 에러 처리 같은 부수 효과가 있으면 반드시 포함해
+- 코드를 출력하지 말 것. 논리 흐름과 동작 변화만 서술
 - 기술 용어(함수명, 속성명, API 경로)는 그대로 사용
-- 파일명 반복 금지. 요약 문장만 출력해.`;
+- 파일명 반복 금지
+- 항목 레이블(**변경 의도**, **As-Is**, **To-Be**)은 반드시 포함할 것`;
 }
 
 /**
@@ -67,7 +71,7 @@ export async function summarizeWithGemini(
       body: JSON.stringify({
         contents: [{ parts: [{ text: prompt }] }],
         generationConfig: {
-          maxOutputTokens: 500,
+          maxOutputTokens: 800,
           temperature: 0.2,
         },
       }),

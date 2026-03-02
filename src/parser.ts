@@ -1230,15 +1230,35 @@ function renderDiffSnippet(removed: string[], added: string[], maxLines = 8): st
     return (
       t.length === 0 ||
       /^[(){}\[\];,]$/.test(t) ||
-      /^className=/.test(t) ||
-      /^import\s/.test(t)
+      /^import\s/.test(t) ||
+      /^\{?\/\*/.test(t) ||   // JSX/block comments: {/* ... */} or /* ... */
+      /^\/\//.test(t)          // line comments: // ...
     );
   };
 
-  const filteredRemoved = removed.filter((l) => !isNoise(l));
-  const filteredAdded = added.filter((l) => !isNoise(l));
+  // className lines are handled separately — extract changed class tokens
+  const isClassNameLine = (line: string) => /className=['"`{]/.test(line);
+  const extractClasses = (line: string): string[] => {
+    const m = line.match(/className=['"`]([^'"`]+)['"`]/);
+    if (!m) return [];
+    return m[1].split(/\s+/).filter(Boolean);
+  };
 
-  if (filteredRemoved.length === 0 && filteredAdded.length === 0) return null;
+  const filteredRemoved = removed.filter((l) => !isNoise(l) && !isClassNameLine(l));
+  const filteredAdded = added.filter((l) => !isNoise(l) && !isClassNameLine(l));
+
+  // Class diff: tokens added or removed
+  const removedClassLines = removed.filter(isClassNameLine);
+  const addedClassLines = added.filter(isClassNameLine);
+  const removedClasses = new Set(removedClassLines.flatMap(extractClasses));
+  const addedClasses = new Set(addedClassLines.flatMap(extractClasses));
+  const classRemoved = [...removedClasses].filter((c) => !addedClasses.has(c));
+  const classAdded = [...addedClasses].filter((c) => !removedClasses.has(c));
+
+  const hasCodeDiff = filteredRemoved.length > 0 || filteredAdded.length > 0;
+  const hasClassDiff = classRemoved.length > 0 || classAdded.length > 0;
+
+  if (!hasCodeDiff && !hasClassDiff) return null;
 
   const lines: string[] = ["```diff"];
 
@@ -1250,6 +1270,10 @@ function renderDiffSnippet(removed: string[], added: string[], maxLines = 8): st
 
   appendLines(filteredRemoved, "- ");
   appendLines(filteredAdded, "+ ");
+
+  // Append class token diff as compact lines
+  classRemoved.forEach((c) => lines.push(`- .${c}`));
+  classAdded.forEach((c) => lines.push(`+ .${c}`));
 
   lines.push("```");
   return lines;
@@ -1303,27 +1327,21 @@ function buildGroupStorySummary(
     parts.push(`${unique.map((t) => `<${t}>`).join(", ")} 사용`);
   }
 
-  // Variables / setup (cap 3)
-  if (allSetup.length > 0) {
-    const shown = [...new Set(allSetup)].slice(0, 3).join(", ");
-    parts.push(`${shown} 처리`);
-  }
-
-  // Params (cap 2)
-  if (allParams.length > 0 && parts.length < 2) {
-    const shown = [...new Set(allParams)].slice(0, 2).join(", ");
-    parts.push(`${shown} 처리`);
-  }
-
-  // Behavior signals (hook/state/API — cap 1)
-  if (allBehavior.length > 0 && parts.length < 2) {
-    // Strip tier markers like "(state) `x` ← ..." → just the hook name
-    const signal = allBehavior[0]
+  // Behavior signals first (most meaningful) — API/state/hook/effect
+  const behaviorSignals = [...new Set(allBehavior)].slice(0, 2).map((signal) =>
+    signal
+      .replace(/^\(state\)\s*`(\w+)`\s*←\s*`([\w.]+)\(.*$/, "$2 → $1")
       .replace(/^\(state\)\s*`(\w+)`.*$/, "$1 상태")
       .replace(/^\(API\)\s*`([\w.]+)\(.*$/, "$1 호출")
       .replace(/^state `(\w+)`.*$/, "$1 상태")
-      .replace(/^`useEffect`.*$/, "useEffect 등록");
-    parts.push(signal);
+      .replace(/^`useEffect`.*$/, "useEffect 등록")
+  );
+  behaviorSignals.forEach((s) => parts.push(s));
+
+  // Params only if no behavior signal yet
+  if (allParams.length > 0 && parts.length === 0) {
+    const shown = [...new Set(allParams)].slice(0, 2).join(", ");
+    parts.push(`${shown} 파라미터 추가`);
   }
 
   return parts.length > 0 ? parts.join(", ") : "";
@@ -1377,48 +1395,56 @@ export function generateSymbolSections(
     moved: "이동",
   };
 
+  // Build <details> summary line: "N개 함수 수정 — `sym1`, `sym2` 외 M개"
+  const SYMBOL_CAP = 5;
+  const allSymNames = entries.map((e) => e.sym.name);
+  const shownNames = allSymNames.slice(0, SYMBOL_CAP).map((n) => `\`${n}\``).join(", ");
+  const extraCount = allSymNames.length > SYMBOL_CAP ? ` 외 ${allSymNames.length - SYMBOL_CAP}개` : "";
+
+  // Determine dominant action label for summary
+  const statusCounts = { added: groups.added.length, modified: groups.modified.length, removed: groups.removed.length, moved: groups.moved.length };
+  const dominantStatus = (["added", "modified", "removed", "moved"] as const).reduce((a, b) => statusCounts[a] >= statusCounts[b] ? a : b);
+  const totalCount = entries.length;
+  const summaryLabel = `${totalCount}개 함수 ${GROUP_LABEL[dominantStatus]} — ${shownNames}${extraCount}`;
+
+  // Collect all detail lines into innerLines
+  const innerLines: string[] = [];
+
   for (const status of ["added", "modified", "removed", "moved"] as const) {
     const group = groups[status];
     if (group.length === 0) continue;
 
-    const nameList = group.map((e) => `\`${e.sym.name}\``).join(", ");
-    const story = buildGroupStorySummary(group, isJSX);
-    const header = story
-      ? `${GROUP_LABEL[status]} (${group.length})  ${nameList} — ${story}`
-      : `${GROUP_LABEL[status]} (${group.length})  ${nameList}`;
-
-    sections.push(header);
-
-    // Per-symbol detail lines (indented, only when there's meaningful content)
-    for (const { sym, setupNames } of group) {
+    // Per-symbol detail lines
+    for (const { sym } of group) {
       const lines: string[] = [];
-
-      if (setupNames.length > 0) {
-        const VAR_CAP = 5;
-        const shown = setupNames.slice(0, VAR_CAP).map((n) => `\`${n}\``).join(", ");
-        const extra = setupNames.length > VAR_CAP ? ` 외 ${setupNames.length - VAR_CAP}개` : "";
-        lines.push(`변수: ${shown}${extra}`);
-      }
 
       const paramChanges = extractParamChanges(sym.addedLines, sym.removedLines);
       const PARAM_CAP = 4;
-      paramChanges.added.slice(0, PARAM_CAP).forEach((p) => lines.push(`파라미터+ \`${p}\``));
-      if (paramChanges.added.length > PARAM_CAP)
-        lines.push(`파라미터+ … 외 ${paramChanges.added.length - PARAM_CAP}개`);
-      paramChanges.removed.slice(0, PARAM_CAP).forEach((p) => lines.push(`파라미터- \`${p}\``));
-      if (paramChanges.removed.length > PARAM_CAP)
-        lines.push(`파라미터- … 외 ${paramChanges.removed.length - PARAM_CAP}개`);
+      if (paramChanges.added.length > 0) {
+        const shown = paramChanges.added.slice(0, PARAM_CAP).map((p) => `\`${p}\``).join(", ");
+        const extra = paramChanges.added.length > PARAM_CAP ? ` 외 ${paramChanges.added.length - PARAM_CAP}개` : "";
+        lines.push(`파라미터 추가: ${shown}${extra}`);
+      }
+      if (paramChanges.removed.length > 0) {
+        const shown = paramChanges.removed.slice(0, PARAM_CAP).map((p) => `\`${p}\``).join(", ");
+        const extra = paramChanges.removed.length > PARAM_CAP ? ` 외 ${paramChanges.removed.length - PARAM_CAP}개` : "";
+        lines.push(`파라미터 제거: ${shown}${extra}`);
+      }
 
       const props = extractPropsChanges(sym.addedLines, sym.removedLines);
       const abbreviateProp = (p: string) =>
         p.replace(/^(\w[\w?]*:\s*)(['"`])(.{20,})(\2)$/, "$1$2...$2");
       const PROPS_CAP = 5;
-      props.added.slice(0, PROPS_CAP).forEach((p) => lines.push(`Props+ \`${abbreviateProp(p)}\``));
-      if (props.added.length > PROPS_CAP)
-        lines.push(`Props+ … 외 ${props.added.length - PROPS_CAP}개`);
-      props.removed.slice(0, PROPS_CAP).forEach((p) => lines.push(`Props- \`${abbreviateProp(p)}\``));
-      if (props.removed.length > PROPS_CAP)
-        lines.push(`Props- … 외 ${props.removed.length - PROPS_CAP}개`);
+      if (props.added.length > 0) {
+        const shown = props.added.slice(0, PROPS_CAP).map((p) => `\`${abbreviateProp(p)}\``).join(", ");
+        const extra = props.added.length > PROPS_CAP ? ` 외 ${props.added.length - PROPS_CAP}개` : "";
+        lines.push(`Props 추가: ${shown}${extra}`);
+      }
+      if (props.removed.length > 0) {
+        const shown = props.removed.slice(0, PROPS_CAP).map((p) => `\`${abbreviateProp(p)}\``).join(", ");
+        const extra = props.removed.length > PROPS_CAP ? ` 외 ${props.removed.length - PROPS_CAP}개` : "";
+        lines.push(`Props 제거: ${shown}${extra}`);
+      }
 
       if (sym.status !== "removed" && sym.status !== "moved") {
         const addedBehavior = buildBehaviorSummary(sym.addedLines);
@@ -1437,20 +1463,6 @@ export function generateSymbolSections(
           return !removedCore.includes(core);
         });
 
-        const changedOnly = removedBehavior.filter((l) => {
-          const core = l
-            .replace(/^state `(\w+)`.*$/, "state:$1")
-            .replace(/^`useEffect`.*$/, "useEffect");
-          const addedCore = addedBehavior.map((a) =>
-            a.replace(/^state `(\w+)`.*$/, "state:$1")
-             .replace(/^`useEffect`.*$/, "useEffect"),
-          );
-          return addedCore.includes(core);
-        });
-
-        deduped.forEach((l) => lines.push(`+ ${l}`));
-        changedOnly.slice(0, 2).forEach((l) => lines.push(`~ ${l.replace(/^state `\w+` 제거$/, "").replace(/^`useEffect`.*$/, "`useEffect` deps 변경")}`));
-
         const pureRemoved = removedBehavior.filter((l) => {
           const core = l
             .replace(/^state `(\w+)`.*$/, "state:$1")
@@ -1461,17 +1473,27 @@ export function generateSymbolSections(
           );
           return !addedCore.includes(core);
         });
-        pureRemoved.slice(0, 4).forEach((l) => lines.push(`- ${l}`));
+
+        if (pureRemoved.length > 0 && deduped.length > 0) {
+          lines.push(`As-Is: ${pureRemoved.slice(0, 2).join(", ")}`);
+          lines.push(`To-Be: ${deduped.slice(0, 2).join(", ")}`);
+        } else {
+          deduped.forEach((l) => lines.push(`To-Be: ${l}`));
+          pureRemoved.slice(0, 2).forEach((l) => lines.push(`제거: ${l}`));
+        }
       } else if (sym.status === "removed" && sym.removedLines.length > 0) {
         buildBehaviorSummary(sym.removedLines, "removed").slice(0, 4)
-          .forEach((l) => lines.push(`- ${l}`));
+          .forEach((l) => lines.push(`제거: ${l}`));
       }
 
       if (isJSX) {
         const addedTree = parseJSXToFlowTree(sym.addedLines);
         const removedTree = parseJSXToFlowTree(sym.removedLines);
-        buildJSXDiffSummary(addedTree, removedTree, sym.addedLines, sym.removedLines)
-          .forEach((l) => lines.push(`UI: ${l.replace(/^[+-]\s*/, "")}`));
+        const jsxLines = buildJSXDiffSummary(addedTree, removedTree, sym.addedLines, sym.removedLines);
+        const jsxAdded = jsxLines.filter((l) => l.startsWith("+")).map((l) => l.replace(/^\+\s*/, ""));
+        const jsxRemoved = jsxLines.filter((l) => l.startsWith("-")).map((l) => l.replace(/^-\s*/, "").replace(/ 제거$/, ""));
+        if (jsxAdded.length > 0) lines.push(`UI 추가: ${jsxAdded.slice(0, 3).join(", ")}`);
+        if (jsxRemoved.length > 0) lines.push(`UI 제거: ${jsxRemoved.slice(0, 2).join(", ")}`);
       }
 
       // Append diff snippet (before/after code block)
@@ -1480,17 +1502,18 @@ export function generateSymbolSections(
 
       if (lines.length === 0 && sym.status === "modified") continue;
 
-      // Only show per-symbol detail when there's more than one symbol in the group
-      // OR when detail lines add something beyond the group story
-      if (group.length > 1 && lines.length > 0) {
-        lines.forEach((l) => sections.push(`  ${sym.name}: ${l}`));
-      } else if (group.length === 1 && lines.length > 0) {
-        lines.forEach((l) => sections.push(`  ${l}`));
-      }
+      innerLines.push(`**${GROUP_LABEL[status]}**: \`${sym.name}\``);
+      lines.forEach((l) => innerLines.push(`  ${l}`));
+      innerLines.push("");
     }
-
-    sections.push("");
   }
+
+  // Wrap everything in <details>/<summary>
+  sections.push(`<details>`);
+  sections.push(`<summary>${summaryLabel}</summary>`);
+  sections.push("");
+  innerLines.forEach((l) => sections.push(l));
+  sections.push("</details>");
 
   return sections;
 }
